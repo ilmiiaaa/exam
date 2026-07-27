@@ -1,0 +1,6 @@
+{
+  "name": "Aplikasi Ujian Realtime",
+  "description": "Aplikasi ujian online sederhana dengan token akses, sinkronisasi real-time Firebase, dan penilaian otomatis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

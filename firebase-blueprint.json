@@ -1,0 +1,49 @@
+{
+  "entities": {
+    "exams": {
+      "title": "Exams",
+      "description": "Exam data including tokens, questions, answer keys, and duration",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string" },
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "question": { "type": "string" },
+              "options": { "type": "array", "items": { "type": "string" } },
+              "correctAnswer": { "type": "number" },
+              "points": { "type": "number" }
+            }
+          }
+        },
+        "createdAt": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["token", "title", "durationMinutes", "questions"]
+    },
+    "submissions": {
+      "title": "Submissions",
+      "description": "Student exam answers, real-time status, and automatic grade results",
+      "type": "object",
+      "properties": {
+        "examToken": { "type": "string" },
+        "examTitle": { "type": "string" },
+        "studentName": { "type": "string" },
+        "answers": { "type": "object" },
+        "score": { "type": "number" },
+        "maxScore": { "type": "number" },
+        "percentage": { "type": "number" },
+        "status": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "submittedAt": { "type": "string" }
+      },
+      "required": ["examToken", "studentName", "status"]
+    }
+  }
+}
