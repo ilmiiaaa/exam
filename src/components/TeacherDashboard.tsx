@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap, RotateCcw } from 'lucide-react';
+import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap, RotateCcw, Upload, FileSpreadsheet, FileText } from 'lucide-react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 import { db } from '../lib/firebase';
@@ -136,6 +136,179 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
     opts[oIdx] = val;
     updated[qIdx].options = opts;
     setQuestions(updated);
+  };
+
+  // Download Excel Template for Questions
+  const handleDownloadTemplate = () => {
+    const templateData = [
+      [
+        'Soal',
+        'Pilihan_A',
+        'Pilihan_B',
+        'Pilihan_C',
+        'Pilihan_D',
+        'Kunci_Jawaban',
+        'Poin',
+        'Pembahasan'
+      ],
+      [
+        'Berapakah hasil dari 15 + 25?',
+        '30',
+        '35',
+        '40',
+        '45',
+        'C',
+        20,
+        '15 + 25 = 40'
+      ],
+      [
+        'Ibu kota negara Indonesia adalah...',
+        'Surabaya',
+        'Bandung',
+        'Nusantara / Jakarta',
+        'Medan',
+        'C',
+        20,
+        'Ibu kota Indonesia adalah Nusantara / Jakarta'
+      ],
+      [
+        'Planet mana yang dikenal sebagai Planet Merah?',
+        'Venus',
+        'Mars',
+        'Yupiter',
+        'Saturnus',
+        'B',
+        20,
+        'Mars tampak kemerahan karena kandungan besi oksida'
+      ]
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(templateData);
+    ws['!cols'] = [
+      { wch: 45 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 10 },
+      { wch: 30 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Template_Soal');
+    XLSX.writeFile(wb, 'Templat_Upload_Soal_Ujian.xlsx');
+  };
+
+  // Upload Excel Questions Handler
+  const handleUploadQuestionsExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = new Uint8Array(event.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+        if (!jsonData || jsonData.length === 0) {
+          setCreateError('File Excel kosong atau tidak memiliki data soal.');
+          return;
+        }
+
+        const parsedQuestions: Question[] = [];
+        let invalidCount = 0;
+
+        jsonData.forEach((row, idx) => {
+          const normalizedRow: Record<string, any> = {};
+          Object.keys(row).forEach((k) => {
+            const cleanKey = k.toString().toLowerCase().replace(/[\_\s]/g, '');
+            normalizedRow[cleanKey] = row[k];
+          });
+
+          const questionText = (
+            normalizedRow['soal'] ||
+            normalizedRow['pertanyaan'] ||
+            normalizedRow['question'] ||
+            ''
+          ).toString().trim();
+
+          if (!questionText) {
+            invalidCount++;
+            return;
+          }
+
+          const optA = (normalizedRow['pilihana'] || normalizedRow['opsia'] || normalizedRow['a'] || '').toString().trim();
+          const optB = (normalizedRow['pilihanb'] || normalizedRow['opsib'] || normalizedRow['b'] || '').toString().trim();
+          const optC = (normalizedRow['pilihanc'] || normalizedRow['opsic'] || normalizedRow['c'] || '').toString().trim();
+          const optD = (normalizedRow['pilihand'] || normalizedRow['opsid'] || normalizedRow['d'] || '').toString().trim();
+
+          const options = [optA, optB, optC, optD];
+
+          let keyStr = (
+            normalizedRow['kuncijawaban'] ||
+            normalizedRow['kunci'] ||
+            normalizedRow['jawaban'] ||
+            normalizedRow['correctanswer'] ||
+            'A'
+          ).toString().trim().toUpperCase();
+
+          let correctAnswerIndex = 0;
+          if (keyStr.includes('B') || keyStr === '2') {
+            correctAnswerIndex = 1;
+          } else if (keyStr.includes('C') || keyStr === '3') {
+            correctAnswerIndex = 2;
+          } else if (keyStr.includes('D') || keyStr === '4') {
+            correctAnswerIndex = 3;
+          } else {
+            correctAnswerIndex = 0;
+          }
+
+          const pointsRaw = Number(
+            normalizedRow['poin'] ||
+            normalizedRow['point'] ||
+            normalizedRow['points'] ||
+            normalizedRow['skor'] ||
+            20
+          );
+          const points = isNaN(pointsRaw) || pointsRaw <= 0 ? 20 : pointsRaw;
+
+          const explanation = (
+            normalizedRow['pembahasan'] ||
+            normalizedRow['penjelasan'] ||
+            normalizedRow['explanation'] ||
+            ''
+          ).toString().trim();
+
+          parsedQuestions.push({
+            id: 'q_' + Date.now() + '_' + idx,
+            question: questionText,
+            options,
+            correctAnswer: correctAnswerIndex,
+            points,
+            explanation: explanation || undefined,
+          });
+        });
+
+        if (parsedQuestions.length === 0) {
+          setCreateError('Tidak ada format soal yang valid ditemukan di file Excel. Pastikan menggunakan templat yang telah disediakan.');
+          return;
+        }
+
+        setQuestions(parsedQuestions);
+        setCreateMsg(`Berhasil mengimpor ${parsedQuestions.length} soal dari file Excel! ${invalidCount > 0 ? `(${invalidCount} baris tidak valid dilewati)` : ''}`);
+        setCreateError('');
+      } catch (err) {
+        console.error(err);
+        setCreateError('Gagal membaca file Excel. Pastikan format file (.xlsx, .xls, .csv) valid.');
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
   };
 
   // Populate form to edit an exam
@@ -827,7 +1000,46 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
                 {/* Questions Builder */}
                 <div className="pt-2 border-t border-slate-100 space-y-4">
-                  <div className="flex items-center justify-between">
+                  {/* Excel Template & Impor Action Card */}
+                  <div className="p-3.5 bg-indigo-50/80 border-2 border-indigo-100 rounded-2xl space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center space-x-2">
+                        <FileSpreadsheet className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span className="text-xs font-black text-indigo-950 font-heading">
+                          Impor Soal via Excel
+                        </span>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={handleDownloadTemplate}
+                          className="px-3 py-1.5 rounded-xl bg-white hover:bg-indigo-100 text-indigo-900 text-[11px] font-bold border border-indigo-200 flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs"
+                          title="Unduh templat Excel yang sesuai spesifikasi aplikasi"
+                        >
+                          <Download className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Unduh Templat Excel</span>
+                        </button>
+
+                        <label className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-black flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs border-b-2 border-indigo-800">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Unggah File Excel (.xlsx)</span>
+                          <input
+                            type="file"
+                            accept=".xlsx, .xls, .csv"
+                            onChange={handleUploadQuestionsExcel}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 font-semibold leading-relaxed">
+                      💡 <strong>Petunjuk:</strong> Unduh templat Excel, isi pertanyaan, pilihan A-D, kunci jawaban (A/B/C/D), dan poin. Kemudian unggah file untuk memasukkan seluruh soal secara otomatis.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
                     <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider font-heading">
                       Daftar Soal Pilihan Ganda ({questions.length})
                     </h4>
