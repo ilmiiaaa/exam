@@ -6,6 +6,8 @@ import { Exam, Submission } from '../types';
 
 interface ExamScreenProps {
   studentName: string;
+  schoolName?: string;
+  gradeName?: string;
   examToken: string;
   exam: Exam;
   onFinishExam: (submission: Submission) => void;
@@ -13,6 +15,8 @@ interface ExamScreenProps {
 
 export const ExamScreen: React.FC<ExamScreenProps> = ({
   studentName,
+  schoolName,
+  gradeName,
   examToken,
   exam,
   onFinishExam,
@@ -57,6 +61,8 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
           examToken: exam.token,
           examTitle: exam.title,
           studentName,
+          schoolName: schoolName || 'SD NEGERI BANGUNREJO KIDUL 1',
+          gradeName: gradeName || 'Kelas 6',
           answers: {},
           score: 0,
           maxScore: exam.questions.reduce((sum, q) => sum + (q.points || 20), 0),
@@ -71,7 +77,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     });
 
     return () => unsubscribe();
-  }, [submissionId, exam, studentName, totalDurationSeconds]);
+  }, [submissionId, exam, studentName, schoolName, gradeName, totalDurationSeconds]);
 
   // Real-time Countdown Timer
   useEffect(() => {
@@ -128,6 +134,8 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       examToken: exam.token,
       examTitle: exam.title,
       studentName,
+      schoolName: schoolName || 'SD NEGERI BANGUNREJO KIDUL 1',
+      gradeName: gradeName || 'Kelas 6',
       answers,
       score: earnedScore,
       maxScore: maxPoints,

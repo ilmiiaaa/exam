@@ -10,6 +10,8 @@ import { ensureAuth } from './lib/firebase';
 export default function App() {
   const [screen, setScreen] = useState<'login' | 'exam' | 'result' | 'teacher'>('login');
   const [studentName, setStudentName] = useState('');
+  const [studentSchool, setStudentSchool] = useState('');
+  const [studentGrade, setStudentGrade] = useState('');
   const [examToken, setExamToken] = useState('');
   const [currentExam, setCurrentExam] = useState<Exam | null>(null);
   const [currentSubmission, setCurrentSubmission] = useState<Submission | null>(null);
@@ -20,8 +22,10 @@ export default function App() {
     initializeSeedExams();
   }, []);
 
-  const handleStartExam = (name: string, token: string, exam: Exam) => {
+  const handleStartExam = (name: string, school: string, grade: string, token: string, exam: Exam) => {
     setStudentName(name);
+    setStudentSchool(school);
+    setStudentGrade(grade);
     setExamToken(token);
     setCurrentExam(exam);
     setScreen('exam');
@@ -34,6 +38,8 @@ export default function App() {
 
   const handleResetToLogin = () => {
     setStudentName('');
+    setStudentSchool('');
+    setStudentGrade('');
     setExamToken('');
     setCurrentExam(null);
     setCurrentSubmission(null);
@@ -52,6 +58,8 @@ export default function App() {
       {screen === 'exam' && currentExam && (
         <ExamScreen
           studentName={studentName}
+          schoolName={studentSchool}
+          gradeName={studentGrade}
           examToken={examToken}
           exam={currentExam}
           onFinishExam={handleFinishExam}

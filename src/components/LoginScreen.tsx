@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { User, KeyRound, ArrowRight, ShieldCheck, AlertCircle, Sparkles, Lock, X } from 'lucide-react';
+import { User, KeyRound, ArrowRight, ShieldCheck, AlertCircle, Sparkles, Lock, X, Building, GraduationCap } from 'lucide-react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Exam } from '../types';
+import { SCHOOL_LIST, GRADE_LIST } from '../data/schools';
 
 interface LoginScreenProps {
-  onStartExam: (studentName: string, examToken: string, examData: Exam) => void;
+  onStartExam: (studentName: string, schoolName: string, gradeName: string, examToken: string, examData: Exam) => void;
   onOpenTeacherPanel: () => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTeacherPanel }) => {
   const [studentName, setStudentName] = useState('');
+  const [schoolName, setSchoolName] = useState<string>('');
+  const [gradeName, setGradeName] = useState<string>('');
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -49,6 +52,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
       return;
     }
 
+    if (!schoolName) {
+      setErrorMsg('Harap pilih Asal Sekolah Anda.');
+      return;
+    }
+
+    if (!gradeName) {
+      setErrorMsg('Harap pilih Kelas Anda.');
+      return;
+    }
+
     if (!cleanToken) {
       setErrorMsg('Harap masukkan Token Ujian.');
       return;
@@ -72,7 +85,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
         return;
       }
 
-      onStartExam(cleanName, cleanToken, match);
+      onStartExam(cleanName, schoolName, gradeName, cleanToken, match);
     } catch (err) {
       console.error(err);
       setErrorMsg('Terjadi kesalahan saat memverifikasi token. Coba lagi.');
@@ -170,6 +183,54 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
                   onChange={(e) => setStudentName(e.target.value)}
                   className="w-full pl-10 pr-3.5 py-3 text-sm rounded-2xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 bg-slate-50/90 text-slate-900 font-semibold shadow-inner transition-all"
                 />
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="schoolSelect" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+                Asal Sekolah
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <Building className="w-4 h-4" />
+                </div>
+                <select
+                  id="schoolSelect"
+                  value={schoolName}
+                  onChange={(e) => setSchoolName(e.target.value)}
+                  className="w-full pl-10 pr-3.5 py-3 text-xs md:text-sm rounded-2xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 bg-slate-50/90 text-slate-900 font-bold shadow-inner transition-all cursor-pointer"
+                >
+                  <option value="">-Sekolah-</option>
+                  {SCHOOL_LIST.map((sch) => (
+                    <option key={sch} value={sch}>
+                      {sch}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="gradeSelect" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+                Kelas
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <GraduationCap className="w-4 h-4" />
+                </div>
+                <select
+                  id="gradeSelect"
+                  value={gradeName}
+                  onChange={(e) => setGradeName(e.target.value)}
+                  className="w-full pl-10 pr-3.5 py-3 text-xs md:text-sm rounded-2xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 bg-slate-50/90 text-slate-900 font-bold shadow-inner transition-all cursor-pointer"
+                >
+                  <option value="">-Kelas-</option>
+                  {GRADE_LIST.map((grd) => (
+                    <option key={grd} value={grd}>
+                      {grd}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 

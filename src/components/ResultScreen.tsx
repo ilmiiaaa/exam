@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck } from 'lucide-react';
+import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck, Building, GraduationCap } from 'lucide-react';
 import { Submission, Exam } from '../types';
 
 interface ResultScreenProps {
@@ -50,8 +50,19 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
                 {submission.studentName}
               </h2>
 
-              <p className="text-xs text-slate-200 font-medium">
-                Token: <strong className="font-mono bg-black/30 px-2 py-0.5 rounded-lg border border-white/10">{submission.examToken}</strong> &bull; Waktu Selesai: {submission.submittedAt ? new Date(submission.submittedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}
+              <p className="text-xs text-slate-200 font-semibold flex flex-wrap items-center gap-2">
+                <span className="flex items-center space-x-1 bg-black/30 px-2.5 py-1 rounded-lg border border-white/10">
+                  <Building className="w-3.5 h-3.5 text-amber-300" />
+                  <span>{submission.schoolName || 'SD NEGERI BANGUNREJO KIDUL 1'}</span>
+                </span>
+                <span className="flex items-center space-x-1 bg-black/30 px-2.5 py-1 rounded-lg border border-white/10">
+                  <GraduationCap className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>{submission.gradeName || 'Kelas 6'}</span>
+                </span>
+                <span>&bull;</span>
+                <span>Token: <strong className="font-mono bg-black/30 px-2 py-0.5 rounded-lg border border-white/10">{submission.examToken}</strong></span>
+                <span>&bull;</span>
+                <span>Waktu Selesai: {submission.submittedAt ? new Date(submission.submittedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}</span>
               </p>
 
               <div className="pt-2">

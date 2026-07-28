@@ -23,6 +23,8 @@ export interface Submission {
   examToken: string;
   examTitle: string;
   studentName: string;
+  schoolName?: string;
+  gradeName?: string;
   answers: Record<string, number>; // questionId -> selectedOptionIndex
   score: number;
   maxScore: number;

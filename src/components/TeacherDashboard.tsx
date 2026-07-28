@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck } from 'lucide-react';
+import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap } from 'lucide-react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import * as XLSX from 'xlsx';
 import { db } from '../lib/firebase';
 import { Exam, Submission, Question } from '../types';
 import { initializeSeedExams } from '../lib/initialData';
+import { SCHOOL_LIST, GRADE_LIST } from '../data/schools';
 
 interface TeacherDashboardProps {
   onBackToStudentLogin: () => void;
@@ -15,6 +17,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const [exams, setExams] = useState<Exam[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTokenFilter, setSelectedTokenFilter] = useState<string>('ALL');
+  const [selectedSchoolFilter, setSelectedSchoolFilter] = useState<string>('ALL');
+  const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>('ALL');
 
   // Form State for Exam Creation / Editing
   const [editingExamId, setEditingExamId] = useState<string | null>(null);
@@ -37,6 +41,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   // Modal State for Editing Student Submission
   const [editingSubmission, setEditingSubmission] = useState<Submission | null>(null);
   const [editSubName, setEditSubName] = useState('');
+  const [editSubSchoolName, setEditSubSchoolName] = useState<string>(SCHOOL_LIST[0]);
+  const [editSubGradeName, setEditSubGradeName] = useState<string>(GRADE_LIST[3]); // Default Kelas 6
   const [editSubScore, setEditSubScore] = useState(0);
   const [editSubMaxScore, setEditSubMaxScore] = useState(100);
   const [editSubStatus, setEditSubStatus] = useState<'in_progress' | 'submitted' | 'time_up'>('submitted');
@@ -239,6 +245,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const handleOpenEditSubmission = (sub: Submission) => {
     setEditingSubmission(sub);
     setEditSubName(sub.studentName);
+    setEditSubSchoolName(sub.schoolName || SCHOOL_LIST[0]);
+    setEditSubGradeName(sub.gradeName || 'Kelas 6');
     setEditSubScore(sub.score);
     setEditSubMaxScore(sub.maxScore);
     setEditSubStatus(sub.status);
@@ -258,6 +266,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
       const percentage = editSubMaxScore > 0 ? Math.round((editSubScore / editSubMaxScore) * 100) : 0;
       await updateDoc(doc(db, 'submissions', editingSubmission.id), {
         studentName: editSubName.trim(),
+        schoolName: editSubSchoolName,
+        gradeName: editSubGradeName,
         score: Number(editSubScore),
         maxScore: Number(editSubMaxScore),
         percentage,
@@ -283,11 +293,64 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
   // Filter Submissions
   const filteredSubmissions = submissions.filter((sub) => {
-    const matchesSearch = sub.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          sub.examToken.toLowerCase().includes(searchQuery.toLowerCase());
+    const q = searchQuery.toLowerCase();
+    const matchesSearch = (sub.studentName || '').toLowerCase().includes(q) ||
+                          (sub.examToken || '').toLowerCase().includes(q) ||
+                          (sub.schoolName || '').toLowerCase().includes(q) ||
+                          (sub.gradeName || '').toLowerCase().includes(q);
     const matchesToken = selectedTokenFilter === 'ALL' || sub.examToken === selectedTokenFilter;
-    return matchesSearch && matchesToken;
+    const matchesSchool = selectedSchoolFilter === 'ALL' || (sub.schoolName || 'SD NEGERI BANGUNREJO KIDUL 1') === selectedSchoolFilter;
+    const matchesGrade = selectedGradeFilter === 'ALL' || (sub.gradeName || 'Kelas 6') === selectedGradeFilter;
+    return matchesSearch && matchesToken && matchesSchool && matchesGrade;
   });
+
+  // Handle Export Excel (.xlsx)
+  const handleExportExcel = () => {
+    if (filteredSubmissions.length === 0) {
+      alert('Tidak ada data pengerjaan siswa untuk diunduh.');
+      return;
+    }
+
+    const exportRows = filteredSubmissions.map((sub, idx) => ({
+      'No': idx + 1,
+      'Nama Peserta': sub.studentName || '-',
+      'Asal Sekolah': sub.schoolName || 'SD NEGERI BANGUNREJO KIDUL 1',
+      'Kelas': sub.gradeName || 'Kelas 6',
+      'Token Ujian': sub.examToken || '-',
+      'Judul Ujian': sub.examTitle || '-',
+      'Nilai Perolehan': sub.score,
+      'Nilai Maksimal': sub.maxScore,
+      'Persentase (%)': sub.percentage,
+      'Status Kelulusan': sub.percentage >= 60 ? 'LULUS' : 'TIDAK LULUS',
+      'Status Pengerjaan': sub.status === 'submitted' ? 'Selesai' : sub.status === 'time_up' ? 'Waktu Habis' : 'Sedang Mengerjakan',
+      'Waktu Mulai': sub.startedAt ? new Date(sub.startedAt).toLocaleString('id-ID') : '-',
+      'Waktu Selesai': sub.submittedAt ? new Date(sub.submittedAt).toLocaleString('id-ID') : '-'
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Ringkasan Hasil Ujian');
+
+    worksheet['!cols'] = [
+      { wch: 6 },  // No
+      { wch: 28 }, // Nama Peserta
+      { wch: 35 }, // Asal Sekolah
+      { wch: 15 }, // Kelas
+      { wch: 14 }, // Token Ujian
+      { wch: 25 }, // Judul Ujian
+      { wch: 15 }, // Nilai Perolehan
+      { wch: 15 }, // Nilai Maksimal
+      { wch: 15 }, // Persentase (%)
+      { wch: 18 }, // Status Kelulusan
+      { wch: 20 }, // Status Pengerjaan
+      { wch: 22 }, // Waktu Mulai
+      { wch: 22 }, // Waktu Selesai
+    ];
+
+    const fileToken = selectedTokenFilter !== 'ALL' ? selectedTokenFilter : 'Semua_Token';
+    const fileName = `Ringkasan_Hasil_Ujian_${fileToken}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  };
 
   // Calculate Real-time Statistics
   const totalParticipants = submissions.length;
@@ -422,36 +485,75 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
             {/* Filter Bar & Submissions Table */}
             <div className="card-3d overflow-hidden">
-              <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                 <div className="relative flex-1 max-w-sm">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Cari nama siswa atau token..."
+                    placeholder="Cari nama siswa, sekolah, atau token..."
                     className="w-full pl-9 pr-3 py-2 bg-white border-2 border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
                   />
                 </div>
 
-                <div className="flex items-center space-x-2 shrink-0">
-                  <label className="text-xs font-bold text-slate-600">Filter Token:</label>
-                  <select
-                    value={selectedTokenFilter}
-                    onChange={(e) => setSelectedTokenFilter(e.target.value)}
-                    className="bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-extrabold focus:outline-none focus:border-indigo-500"
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="flex items-center space-x-1.5">
+                    <label className="text-xs font-bold text-slate-600">Sekolah:</label>
+                    <select
+                      value={selectedSchoolFilter}
+                      onChange={(e) => setSelectedSchoolFilter(e.target.value)}
+                      className="bg-white border-2 border-slate-200 rounded-xl px-2.5 py-2 text-xs font-extrabold focus:outline-none focus:border-indigo-500 max-w-[180px] truncate"
+                    >
+                      <option value="ALL">Semua Sekolah</option>
+                      {SCHOOL_LIST.map(sch => (
+                        <option key={sch} value={sch}>{sch}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center space-x-1.5">
+                    <label className="text-xs font-bold text-slate-600">Kelas:</label>
+                    <select
+                      value={selectedGradeFilter}
+                      onChange={(e) => setSelectedGradeFilter(e.target.value)}
+                      className="bg-white border-2 border-slate-200 rounded-xl px-2.5 py-2 text-xs font-extrabold focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="ALL">Semua Kelas</option>
+                      {GRADE_LIST.map(grd => (
+                        <option key={grd} value={grd}>{grd}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center space-x-1.5">
+                    <label className="text-xs font-bold text-slate-600">Token:</label>
+                    <select
+                      value={selectedTokenFilter}
+                      onChange={(e) => setSelectedTokenFilter(e.target.value)}
+                      className="bg-white border-2 border-slate-200 rounded-xl px-2.5 py-2 text-xs font-extrabold focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="ALL">Semua Token</option>
+                      {exams.map(ex => (
+                        <option key={ex.id} value={ex.token}>{ex.token} - {ex.title}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    onClick={handleExportExcel}
+                    className="px-3.5 py-2 rounded-xl btn-3d-emerald text-white text-xs font-black inline-flex items-center space-x-1.5 shadow-md cursor-pointer transition-all active:translate-y-0.5"
+                    title="Unduh Ringkasan Hasil Ujian Format Excel (.xlsx)"
                   >
-                    <option value="ALL">Semua Token Ujian</option>
-                    {exams.map(ex => (
-                      <option key={ex.id} value={ex.token}>{ex.token} - {ex.title}</option>
-                    ))}
-                  </select>
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Unduh Excel</span>
+                  </button>
                 </div>
               </div>
 
               <div className="px-5 py-3.5 bg-slate-100/80 border-b border-slate-200 flex items-center justify-between">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 font-heading">
-                  Daftar Pengerjaan Real-time ({filteredSubmissions.length})
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 font-heading flex items-center space-x-2">
+                  <span>Daftar Pengerjaan Real-time ({filteredSubmissions.length})</span>
                 </h3>
                 <span className="text-[11px] text-slate-500 font-bold flex items-center space-x-1">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -470,6 +572,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                     <thead className="bg-slate-200/60 text-slate-700 uppercase text-[10px] tracking-wider font-black border-b border-slate-200 font-heading">
                       <tr>
                         <th className="py-3.5 px-4">Nama Peserta</th>
+                        <th className="py-3.5 px-4">Asal Sekolah</th>
+                        <th className="py-3.5 px-4">Kelas</th>
                         <th className="py-3.5 px-4">Token Ujian</th>
                         <th className="py-3.5 px-4">Status</th>
                         <th className="py-3.5 px-4">Soal Dijawab</th>
@@ -488,6 +592,18 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                           <tr key={sub.id} className="hover:bg-indigo-50/40 transition-colors">
                             <td className="py-3.5 px-4 font-black text-slate-900">
                               {sub.studentName}
+                            </td>
+                            <td className="py-3.5 px-4 text-slate-700 font-semibold max-w-[200px] truncate">
+                              <span className="inline-flex items-center space-x-1 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md text-[11px] text-slate-800 font-extrabold">
+                                <Building className="w-3 h-3 text-indigo-500 shrink-0" />
+                                <span className="truncate">{sub.schoolName || 'SD NEGERI BANGUNREJO KIDUL 1'}</span>
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-slate-700 font-semibold shrink-0">
+                              <span className="inline-flex items-center space-x-1 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md text-[11px] text-emerald-900 font-extrabold">
+                                <GraduationCap className="w-3 h-3 text-emerald-600 shrink-0" />
+                                <span>{sub.gradeName || 'Kelas 6'}</span>
+                              </span>
                             </td>
                             <td className="py-3.5 px-4">
                               <span className="font-mono text-[11px] bg-slate-900 text-white px-2.5 py-1 rounded-lg font-extrabold border border-slate-800 shadow-xs">
@@ -885,6 +1001,40 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                   onChange={(e) => setEditSubName(e.target.value)}
                   className="w-full px-3.5 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-1">
+                  Asal Sekolah
+                </label>
+                <select
+                  value={editSubSchoolName}
+                  onChange={(e) => setEditSubSchoolName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500 cursor-pointer"
+                >
+                  {SCHOOL_LIST.map((sch) => (
+                    <option key={sch} value={sch}>
+                      {sch}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-1">
+                  Kelas
+                </label>
+                <select
+                  value={editSubGradeName}
+                  onChange={(e) => setEditSubGradeName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500 cursor-pointer"
+                >
+                  {GRADE_LIST.map((grd) => (
+                    <option key={grd} value={grd}>
+                      {grd}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
