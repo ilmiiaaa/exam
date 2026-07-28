@@ -116,8 +116,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
       {/* Top Header Navigation */}
       <header className="max-w-4xl mx-auto w-full flex items-center justify-between py-3 px-5 rounded-2xl bg-slate-900/80 backdrop-blur-md shadow-[0_10px_30px_rgba(0,0,0,0.4)] border border-slate-700/60 relative z-10">
         <div className="flex items-center space-x-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 text-white flex items-center justify-center font-black shadow-[0_6px_20px_rgba(139,92,246,0.4)] border-b-2 border-indigo-800">
-            <ShieldCheck className="w-6 h-6" />
+          <div className="w-11 h-11 rounded-2xl bg-white/10 p-1.5 flex items-center justify-center shadow-[0_6px_20px_rgba(139,92,246,0.3)] border border-slate-700/80 overflow-hidden shrink-0">
+            <img
+              src="https://iili.io/CvXmwBf.png"
+              alt="Exam Edu Logo"
+              className="w-full h-full object-contain filter drop-shadow-sm"
+              referrerPolicy="no-referrer"
+            />
           </div>
           <div>
             <h1 className="text-xl font-extrabold text-white tracking-tight leading-tight font-heading flex items-center gap-1.5">

@@ -568,8 +568,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
       <header className="sticky top-0 z-30 bg-gradient-to-r from-slate-950 via-indigo-950 to-purple-950 text-white shadow-[0_10px_30px_rgba(15,23,42,0.4)] px-4 py-3.5 border-b border-indigo-800/40">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-400 via-amber-300 to-emerald-400 text-slate-950 flex items-center justify-center font-black shadow-[0_6px_16px_rgba(245,158,11,0.4)] border-b-2 border-amber-600">
-              <ShieldCheck className="w-6 h-6" />
+            <div className="w-10 h-10 rounded-2xl bg-white/10 p-1 flex items-center justify-center shadow-[0_6px_16px_rgba(245,158,11,0.3)] border border-slate-700/80 overflow-hidden shrink-0">
+              <img
+                src="https://iili.io/CvXmwBf.png"
+                alt="Exam Edu Logo"
+                className="w-full h-full object-contain filter drop-shadow-sm"
+                referrerPolicy="no-referrer"
+              />
             </div>
             <div>
               <div className="flex items-center space-x-2">
