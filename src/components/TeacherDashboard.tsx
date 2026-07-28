@@ -322,7 +322,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
       'Nilai Maksimal': sub.maxScore,
       'Persentase (%)': sub.percentage,
       'Status Kelulusan': sub.percentage >= 60 ? 'LULUS' : 'TIDAK LULUS',
-      'Status Pengerjaan': sub.status === 'submitted' ? 'Selesai' : sub.status === 'time_up' ? 'Waktu Habis' : 'Sedang Mengerjakan',
+      'Status Pengerjaan': sub.status === 'submitted' ? 'Selesai' : sub.status === 'time_up' ? 'Waktu Habis' : sub.status === 'cheated' || sub.cheatDetected ? 'Pelanggaran (Pindah Tab)' : 'Sedang Mengerjakan',
       'Waktu Mulai': sub.startedAt ? new Date(sub.startedAt).toLocaleString('id-ID') : '-',
       'Waktu Selesai': sub.submittedAt ? new Date(sub.submittedAt).toLocaleString('id-ID') : '-'
     }));
@@ -354,7 +354,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
   // Calculate Real-time Statistics
   const totalParticipants = submissions.length;
-  const completedSubmissions = submissions.filter(s => s.status === 'submitted' || s.status === 'time_up');
+  const completedSubmissions = submissions.filter(s => s.status === 'submitted' || s.status === 'time_up' || s.status === 'cheated');
   const inProgressCount = submissions.filter(s => s.status === 'in_progress').length;
   const avgScore = completedSubmissions.length > 0
     ? Math.round(completedSubmissions.reduce((sum, s) => sum + s.percentage, 0) / completedSubmissions.length)
@@ -627,6 +627,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                                 <span className="inline-flex items-center space-x-1 text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300 px-2.5 py-0.5 rounded-full">
                                   <Clock className="w-3.5 h-3.5 text-slate-500" />
                                   <span>Waktu Habis</span>
+                                </span>
+                              )}
+                              {(sub.status === 'cheated' || sub.cheatDetected) && (
+                                <span className="inline-flex items-center space-x-1 text-[11px] font-extrabold bg-rose-50 text-rose-700 border border-rose-300 px-2.5 py-0.5 rounded-full" title="Siswa mendeteksi aktivitas berpindah tab atau meminimalkan window">
+                                  <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                                  <span>Pelanggaran (Pindah Tab)</span>
                                 </span>
                               )}
                             </td>

@@ -29,7 +29,8 @@ export interface Submission {
   score: number;
   maxScore: number;
   percentage: number;
-  status: 'in_progress' | 'submitted' | 'time_up';
+  status: 'in_progress' | 'submitted' | 'time_up' | 'cheated';
+  cheatDetected?: boolean;
   startedAt: string; // ISO string or timestamp
   submittedAt?: string;
   timeRemainingSeconds?: number;

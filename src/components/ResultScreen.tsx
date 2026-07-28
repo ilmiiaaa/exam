@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck, Building, GraduationCap } from 'lucide-react';
+import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck, Building, GraduationCap, ShieldAlert } from 'lucide-react';
 import { Submission, Exam } from '../types';
 
 interface ResultScreenProps {
@@ -35,6 +35,20 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
       </header>
 
       <main className="max-w-4xl mx-auto w-full my-6 space-y-6">
+        {(submission.status === 'cheated' || submission.cheatDetected) && (
+          <div className="bg-rose-500/10 border-2 border-rose-500/40 rounded-2xl p-4 text-rose-950 text-xs font-bold flex items-start space-x-3 shadow-md">
+            <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5 animate-bounce" />
+            <div>
+              <h4 className="font-black text-sm text-rose-900 font-heading uppercase">
+                ⚠️ Terdeteksi Pelanggaran Anti-Kecurangan
+              </h4>
+              <p className="mt-1 text-rose-800 leading-relaxed font-semibold">
+                Ujian Anda dihentikan secara otomatis dan jawaban yang ada langsung dikirim karena sistem mendeteksi aktivitas berpindah tab browser atau meminimalkan jendela saat ujian sedang berlangsung.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Main Score Hero Card */}
         <div className={`rounded-3xl p-6 md:p-8 shadow-xl text-white relative overflow-hidden border-2 border-white/20 ${
           isPassed ? 'bg-gradient-to-br from-emerald-500 via-teal-600 to-slate-900' : 'bg-gradient-to-br from-rose-500 via-rose-700 to-slate-900'

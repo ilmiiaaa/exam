@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Send, Cloud, HelpCircle } from 'lucide-react';
+import { Clock, CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Send, Cloud, HelpCircle, ShieldAlert } from 'lucide-react';
 import { doc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Exam, Submission } from '../types';
@@ -35,6 +35,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
   const totalDurationSeconds = exam.durationMinutes * 60;
   const [timeLeft, setTimeLeft] = useState<number>(totalDurationSeconds);
   const startTimeRef = useRef<number>(Date.now());
+  const isSubmittedRef = useRef<boolean>(false);
 
   // Initialize or Sync session state in Firestore
   useEffect(() => {
@@ -46,6 +47,9 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
         const data = snap.data() as Submission;
         if (data.answers) {
           setAnswers(data.answers);
+        }
+        if (data.status && data.status !== 'in_progress') {
+          isSubmittedRef.current = true;
         }
         if (data.startedAt) {
           const startedMs = new Date(data.startedAt).getTime();
@@ -79,6 +83,24 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     return () => unsubscribe();
   }, [submissionId, exam, studentName, schoolName, gradeName, totalDurationSeconds]);
 
+  // Anti-Cheating: Detect Tab Switch or Window Minimize
+  useEffect(() => {
+    const handleAntiCheat = () => {
+      if ((document.hidden || document.visibilityState === 'hidden') && !isSubmittedRef.current) {
+        isSubmittedRef.current = true;
+        console.warn('Anti-cheat triggered: Tab switched or window minimized.');
+        handleSubmitFinal('cheated');
+      }
+    };
+
+    // Listen for visibility change (tab switch, minimize window)
+    document.addEventListener('visibilitychange', handleAntiCheat);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleAntiCheat);
+    };
+  }, []);
+
   // Real-time Countdown Timer
   useEffect(() => {
     const timer = setInterval(() => {
@@ -86,8 +108,9 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       const remain = Math.max(0, totalDurationSeconds - elapsed);
       setTimeLeft(remain);
 
-      if (remain <= 0) {
+      if (remain <= 0 && !isSubmittedRef.current) {
         clearInterval(timer);
+        isSubmittedRef.current = true;
         handleAutoSubmitTimeUp();
       }
     }, 1000);
@@ -115,7 +138,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
   };
 
   // Grade Exam Automatically
-  const calculateFinalGrade = (status: 'submitted' | 'time_up'): Submission => {
+  const calculateFinalGrade = (status: 'submitted' | 'time_up' | 'cheated'): Submission => {
     let earnedScore = 0;
     let maxPoints = 0;
 
@@ -141,13 +164,15 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       maxScore: maxPoints,
       percentage,
       status,
+      cheatDetected: status === 'cheated',
       startedAt: new Date(startTimeRef.current).toISOString(),
       submittedAt: new Date().toISOString(),
     };
   };
 
   // Final Submit Handler
-  const handleSubmitFinal = async (status: 'submitted' | 'time_up' = 'submitted') => {
+  const handleSubmitFinal = async (status: 'submitted' | 'time_up' | 'cheated' = 'submitted') => {
+    isSubmittedRef.current = true;
     setSubmitting(true);
     try {
       const finalSubmission = calculateFinalGrade(status);
@@ -221,6 +246,14 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
           </div>
         </div>
       </header>
+
+      {/* Anti-Cheating Warning Banner */}
+      <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-center text-xs font-bold text-amber-900 flex items-center justify-center space-x-2">
+        <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
+        <span>
+          <strong>Fitur Anti-Kecurangan Aktif:</strong> Dilarang berpindah tab atau meminimalkan browser. Jika terdeteksi, ujian akan langsung dihentikan dan jawaban dikirim otomatis.
+        </span>
+      </div>
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-5xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
