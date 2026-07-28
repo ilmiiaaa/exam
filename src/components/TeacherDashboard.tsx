@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap } from 'lucide-react';
+import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap, RotateCcw } from 'lucide-react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 import { db } from '../lib/firebase';
@@ -47,6 +47,31 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const [editSubMaxScore, setEditSubMaxScore] = useState(100);
   const [editSubStatus, setEditSubStatus] = useState<'in_progress' | 'submitted' | 'time_up'>('submitted');
   const [subModalError, setSubModalError] = useState('');
+
+  // Reset Data Confirmation State
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
+  // Handle Reset / Clear All Submissions Data
+  const handleResetData = async () => {
+    if (submissions.length === 0) {
+      alert('Tidak ada data pengerjaan siswa untuk dihapus.');
+      return;
+    }
+
+    setIsResetting(true);
+    try {
+      const deletePromises = submissions.map((sub) => deleteDoc(doc(db, 'submissions', sub.id)));
+      await Promise.all(deletePromises);
+      setShowResetConfirm(false);
+      alert('Berhasil menghapus seluruh data pengerjaan ujian siswa.');
+    } catch (err) {
+      console.error(err);
+      alert('Gagal menghapus data pengerjaan: ' + (err as Error).message);
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   // 1. Subscribe Real-time Submissions
   useEffect(() => {
@@ -547,6 +572,21 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Unduh Excel</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      if (submissions.length === 0) {
+                        alert('Tidak ada data pengerjaan siswa untuk dihapus.');
+                        return;
+                      }
+                      setShowResetConfirm(true);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black inline-flex items-center space-x-1.5 shadow-md cursor-pointer transition-all active:translate-y-0.5 border-b-2 border-rose-800"
+                    title="Hapus seluruh hasil pengerjaan ujian siswa"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset Data</span>
                   </button>
                 </div>
               </div>
@@ -1103,6 +1143,66 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Data Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full border-2 border-slate-200 shadow-2xl space-y-5">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900 font-heading">
+                  Konfirmasi Reset Data
+                </h3>
+                <p className="text-xs font-semibold text-slate-500">
+                  Hapus Seluruh Hasil Ujian Siswa
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs font-semibold text-rose-900 space-y-1.5">
+              <p className="font-bold text-rose-950">⚠️ Peringatan Penting:</p>
+              <p>
+                Tindakan ini akan menghapus permanen sebanyak <strong>{submissions.length} data pengerjaan ujian</strong> siswa di database Cloud Firestore.
+              </p>
+              <p className="text-rose-700">
+                Data yang sudah dihapus tidak dapat dikembalikan lagi.
+              </p>
+            </div>
+
+            <div className="flex items-center space-x-3 pt-2">
+              <button
+                type="button"
+                disabled={isResetting}
+                onClick={() => setShowResetConfirm(false)}
+                className="flex-1 py-3 rounded-2xl border-2 border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isResetting}
+                onClick={handleResetData}
+                className="flex-1 py-3 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black flex items-center justify-center space-x-1.5 transition-all shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {isResetting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Menghapus...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Ya, Hapus Semua Data</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
