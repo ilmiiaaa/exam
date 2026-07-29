@@ -27,6 +27,10 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [savingStatus, setSavingStatus] = useState<'saved' | 'saving' | 'error'>('saved');
 
+  const [cheatCount, setCheatCount] = useState<number>(0);
+  const cheatCountRef = useRef<number>(0);
+  const [showCheatModal, setShowCheatModal] = useState<boolean>(false);
+
   // Compute submission ID uniquely per student & exam
   const submissionId = useRef(
     `${examToken.toUpperCase()}_${studentName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`
@@ -47,6 +51,10 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
         const data = snap.data() as Submission;
         if (data.answers) {
           setAnswers(data.answers);
+        }
+        if (data.cheatCount !== undefined && data.cheatCount > cheatCountRef.current) {
+          cheatCountRef.current = data.cheatCount;
+          setCheatCount(data.cheatCount);
         }
         if (data.status && data.status !== 'in_progress') {
           isSubmittedRef.current = true;
@@ -72,6 +80,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
           maxScore: exam.questions.reduce((sum, q) => sum + (q.points || 20), 0),
           percentage: 0,
           status: 'in_progress',
+          cheatCount: 0,
           startedAt: new Date().toISOString(),
         };
         await setDoc(docRef, initialSub, { merge: true });
@@ -85,11 +94,29 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
 
   // Anti-Cheating: Detect Tab Switch or Window Minimize
   useEffect(() => {
-    const handleAntiCheat = () => {
+    const handleAntiCheat = async () => {
       if ((document.hidden || document.visibilityState === 'hidden') && !isSubmittedRef.current) {
-        isSubmittedRef.current = true;
-        console.warn('Anti-cheat triggered: Tab switched or window minimized.');
-        handleSubmitFinal('cheated');
+        const newCount = cheatCountRef.current + 1;
+        cheatCountRef.current = newCount;
+        setCheatCount(newCount);
+
+        console.warn(`Anti-cheat triggered: Tab switched or window minimized. Violation #${newCount}`);
+
+        // Sync cheat count to Firestore immediately
+        try {
+          const docRef = doc(db, 'submissions', submissionId);
+          await updateDoc(docRef, { cheatCount: newCount, cheatDetected: true });
+        } catch (err) {
+          console.error('Failed to sync cheat count:', err);
+        }
+
+        if (newCount > 3) {
+          isSubmittedRef.current = true;
+          console.warn('Anti-cheat triggered: Exceeded 3 chances. Stopping exam with score 0.');
+          handleSubmitFinal('cheated');
+        } else {
+          setShowCheatModal(true);
+        }
       }
     };
 
@@ -99,7 +126,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     return () => {
       document.removeEventListener('visibilitychange', handleAntiCheat);
     };
-  }, []);
+  }, [submissionId]);
 
   // Real-time Countdown Timer
   useEffect(() => {
@@ -150,6 +177,10 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       }
     });
 
+    if (status === 'cheated') {
+      earnedScore = 0;
+    }
+
     const percentage = maxPoints > 0 ? Math.round((earnedScore / maxPoints) * 100) : 0;
 
     return {
@@ -164,7 +195,8 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       maxScore: maxPoints,
       percentage,
       status,
-      cheatDetected: status === 'cheated',
+      cheatDetected: status === 'cheated' || cheatCountRef.current > 0,
+      cheatCount: cheatCountRef.current,
       startedAt: new Date(startTimeRef.current).toISOString(),
       submittedAt: new Date().toISOString(),
     };
@@ -251,7 +283,12 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-center text-xs font-bold text-amber-900 flex items-center justify-center space-x-2">
         <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
         <span>
-          <strong>Fitur Anti-Kecurangan Aktif:</strong> Dilarang berpindah tab atau meminimalkan browser. Jika terdeteksi, ujian akan langsung dihentikan dan jawaban dikirim otomatis.
+          <strong>Fitur Anti-Kecurangan Aktif:</strong> Dilarang berpindah tab. Diberikan batas 3 kali toleransi. Jika melanggar lebih dari 3x, ujian dihentikan dengan nilai 0.
+          {cheatCount > 0 && (
+            <span className="ml-2 bg-rose-600 text-white font-black px-2 py-0.5 rounded-md text-[11px] inline-flex items-center space-x-1">
+              <span>Pelanggaran: {cheatCount}/3</span>
+            </span>
+          )}
         </span>
       </div>
 
@@ -470,6 +507,41 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Anti-Cheating Warning Modal for Tolerances (1 to 3) */}
+      {showCheatModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="card-3d max-w-sm w-full p-6 text-center space-y-4 bg-white border-2 border-rose-200 shadow-2xl relative">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-600 via-rose-500 to-amber-500 text-white mx-auto flex items-center justify-center shadow-lg border-b-2 border-rose-800 animate-pulse">
+              <ShieldAlert className="w-8 h-8" />
+            </div>
+
+            <div>
+              <span className="inline-block px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 mb-2 border border-rose-200">
+                Peringatan Kecurangan ({cheatCount}/3)
+              </span>
+              <h3 className="text-xl font-black text-slate-900 font-heading">
+                Terdeteksi Berpindah Layar!
+              </h3>
+              <p className="text-xs text-slate-600 font-medium leading-relaxed mt-2">
+                Sistem mendeteksi Anda meninggalkan atau berpindah dari tab ujian.{' '}
+                <strong>Kesempatan tersisa: {Math.max(0, 3 - cheatCount)}x lagi.</strong>
+              </p>
+              <div className="mt-3 p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-[11px] font-bold text-left">
+                ⚠️ PERHATIAN: Jika melanggar lebih dari 3 kali (mencapai batas toleransi), ujian akan dihentikan secara otomatis dan nilai Anda menjadi 0.
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowCheatModal(false)}
+              className="w-full py-3.5 px-4 btn-3d-indigo text-white text-xs font-black rounded-2xl shadow-md transition-all cursor-pointer"
+            >
+              Saya Mengerti & Lanjutkan Ujian
+            </button>
           </div>
         </div>
       )}

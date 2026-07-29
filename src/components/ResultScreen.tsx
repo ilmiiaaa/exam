@@ -40,10 +40,10 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
             <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5 animate-bounce" />
             <div>
               <h4 className="font-black text-sm text-rose-900 font-heading uppercase">
-                ⚠️ Terdeteksi Pelanggaran Anti-Kecurangan
+                ⚠️ Terdeteksi Pelanggaran Anti-Kecurangan ({submission.cheatCount || 4}x)
               </h4>
               <p className="mt-1 text-rose-800 leading-relaxed font-semibold">
-                Ujian Anda dihentikan secara otomatis dan jawaban yang ada langsung dikirim karena sistem mendeteksi aktivitas berpindah tab browser atau meminimalkan jendela saat ujian sedang berlangsung.
+                Ujian Anda dihentikan secara otomatis dan nilai diset menjadi 0 karena terdeteksi berpindah tab browser atau meminimalkan jendela melebihi batas toleransi 3 kali.
               </p>
             </div>
           </div>

@@ -31,6 +31,7 @@ export interface Submission {
   percentage: number;
   status: 'in_progress' | 'submitted' | 'time_up' | 'cheated';
   cheatDetected?: boolean;
+  cheatCount?: number;
   startedAt: string; // ISO string or timestamp
   submittedAt?: string;
   timeRemainingSeconds?: number;
