@@ -130,43 +130,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
       <div className="absolute top-10 left-1/4 w-72 h-72 bg-indigo-600/30 rounded-full blur-3xl pointer-events-none"></div>
       <div className="absolute bottom-10 right-1/4 w-80 h-80 bg-fuchsia-600/25 rounded-full blur-3xl pointer-events-none"></div>
 
-      {/* Top Header Navigation */}
-      <header className="max-w-4xl mx-auto w-full flex items-center justify-between py-3 px-5 rounded-2xl bg-slate-900/80 backdrop-blur-md shadow-[0_10px_30px_rgba(0,0,0,0.4)] border border-slate-700/60 relative z-10">
-        <div className="flex items-center space-x-3">
-          <div className="w-11 h-11 rounded-2xl bg-white/10 p-1.5 flex items-center justify-center shadow-[0_6px_20px_rgba(139,92,246,0.3)] border border-slate-700/80 overflow-hidden shrink-0">
-            <img
-              src="https://iili.io/CvXmwBf.png"
-              alt="Exam Edu Logo"
-              className="w-full h-full object-contain filter drop-shadow-sm"
-              referrerPolicy="no-referrer"
-            />
-          </div>
-          <div>
-            <h1 className="text-xl font-extrabold text-white tracking-tight leading-tight font-heading flex items-center gap-1.5">
-              <span>Exam Edu</span>
-              <span className="text-[10px] bg-gradient-to-r from-amber-400 via-amber-300 to-emerald-400 text-slate-950 font-black px-2.5 py-0.5 rounded-full shadow-xs">
-                REAL-TIME PRO
-              </span>
-            </h1>
-            <p className="text-xs text-indigo-200 font-semibold">Penilaian Otomatis & Sinergi Cloud</p>
-          </div>
-        </div>
-
-        <button
-          onClick={() => {
-            setTeacherAuthError('');
-            setTeacherPassword('');
-            setShowTeacherModal(true);
-          }}
-          className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 hover:from-amber-300 hover:to-amber-400 transition-all shadow-[0_4px_16px_rgba(245,158,11,0.35)] border-b-2 border-amber-600 active:translate-y-0.5 cursor-pointer"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-slate-950" />
-          <span>Panel Guru / Monitor</span>
-        </button>
-      </header>
-
-      {/* Main Login Form Container */}
-      <main className="max-w-md mx-auto w-full my-8 relative z-10">
+      {/* Main Login Form Container (Moved Up) */}
+      <main className="max-w-md mx-auto w-full my-4 relative z-10">
         <div className="card-3d p-6 md:p-8 relative overflow-hidden bg-white text-slate-900 border-2 border-indigo-100 shadow-[0_20px_50px_rgba(0,0,0,0.3)]">
           <div className="absolute -top-12 -right-12 w-32 h-32 bg-gradient-to-br from-indigo-300 to-pink-300 rounded-full blur-2xl pointer-events-none opacity-60"></div>
 
@@ -389,6 +354,41 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
           )}
         </div>
       </main>
+
+      {/* Header Navigation (Moved Down) */}
+      <header className="max-w-4xl mx-auto w-full flex flex-col sm:flex-row items-center justify-between gap-3 py-3 px-5 rounded-2xl bg-slate-900/80 backdrop-blur-md shadow-[0_10px_30px_rgba(0,0,0,0.4)] border border-slate-700/60 relative z-10 my-4">
+        <div className="flex items-center space-x-3">
+          <div className="w-11 h-11 rounded-2xl bg-white/10 p-1.5 flex items-center justify-center shadow-[0_6px_20px_rgba(139,92,246,0.3)] border border-slate-700/80 overflow-hidden shrink-0">
+            <img
+              src="https://iili.io/CvXmwBf.png"
+              alt="Exam Edu Logo"
+              className="w-full h-full object-contain filter drop-shadow-sm"
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          <div>
+            <h1 className="text-xl font-extrabold text-white tracking-tight leading-tight font-heading flex items-center gap-1.5">
+              <span>Exam Edu</span>
+              <span className="text-[10px] bg-gradient-to-r from-amber-400 via-amber-300 to-emerald-400 text-slate-950 font-black px-2.5 py-0.5 rounded-full shadow-xs">
+                REAL-TIME PRO
+              </span>
+            </h1>
+            <p className="text-xs text-indigo-200 font-semibold">Penilaian Otomatis & Sinergi Cloud</p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            setTeacherAuthError('');
+            setTeacherPassword('');
+            setShowTeacherModal(true);
+          }}
+          className="w-full sm:w-auto inline-flex items-center justify-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 hover:from-amber-300 hover:to-amber-400 transition-all shadow-[0_4px_16px_rgba(245,158,11,0.35)] border-b-2 border-amber-600 active:translate-y-0.5 cursor-pointer"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-slate-950" />
+          <span>Panel Guru / Monitor</span>
+        </button>
+      </header>
 
       {/* Teacher Access Password Modal */}
       {showTeacherModal && (
