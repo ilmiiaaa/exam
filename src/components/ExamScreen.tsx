@@ -36,10 +36,17 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     `${examToken.toUpperCase()}_${studentName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`
   ).current;
 
-  const totalDurationSeconds = exam.durationMinutes * 60;
+  const totalDurationSeconds = Math.max(60, (Number(exam.durationMinutes) || 15) * 60);
   const [timeLeft, setTimeLeft] = useState<number>(totalDurationSeconds);
   const startTimeRef = useRef<number>(Date.now());
   const isSubmittedRef = useRef<boolean>(false);
+  const [showTimeUpModal, setShowTimeUpModal] = useState<boolean>(false);
+  const answersRef = useRef<Record<string, number>>(answers);
+
+  // Keep answersRef synced with latest state
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
 
   // Initialize or Sync session state in Firestore
   useEffect(() => {
@@ -128,19 +135,91 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     };
   }, [submissionId]);
 
-  // Real-time Countdown Timer
+  // Grade Exam Automatically using latest answers from ref
+  const calculateFinalGrade = (status: 'submitted' | 'time_up' | 'cheated'): Submission => {
+    const currentAnswers = answersRef.current;
+    let earnedScore = 0;
+    let maxPoints = 0;
+
+    exam.questions.forEach((q) => {
+      const points = q.points || 20;
+      maxPoints += points;
+      if (currentAnswers[q.id] === q.correctAnswer) {
+        earnedScore += points;
+      }
+    });
+
+    if (status === 'cheated') {
+      earnedScore = 0;
+    }
+
+    const percentage = maxPoints > 0 ? Math.round((earnedScore / maxPoints) * 100) : 0;
+
+    return {
+      id: submissionId,
+      examToken: exam.token,
+      examTitle: exam.title,
+      studentName,
+      schoolName: schoolName || 'SD NEGERI BANGUNREJO KIDUL 1',
+      gradeName: gradeName || 'Kelas 6',
+      answers: currentAnswers,
+      score: earnedScore,
+      maxScore: maxPoints,
+      percentage,
+      status,
+      cheatDetected: status === 'cheated' || cheatCountRef.current > 0,
+      cheatCount: cheatCountRef.current,
+      startedAt: new Date(startTimeRef.current).toISOString(),
+      submittedAt: new Date().toISOString(),
+      timeRemainingSeconds: Math.max(0, timeLeft),
+    };
+  };
+
+  // Final Submit Handler
+  const handleSubmitFinal = async (status: 'submitted' | 'time_up' | 'cheated' = 'submitted') => {
+    if (isSubmittedRef.current && status !== 'time_up' && status !== 'cheated') {
+      return;
+    }
+    isSubmittedRef.current = true;
+    setSubmitting(true);
+    if (status === 'time_up') {
+      setShowTimeUpModal(true);
+    }
+    try {
+      const finalSubmission = calculateFinalGrade(status);
+      const docRef = doc(db, 'submissions', submissionId);
+      await setDoc(docRef, finalSubmission, { merge: true });
+      onFinishExam(finalSubmission);
+    } catch (err) {
+      console.error('Submit exam error:', err);
+      alert('Gagal mengirim jawaban ke server. Periksa koneksi internet Anda.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Real-time Countdown Timer with Auto-Submit on Zero
   useEffect(() => {
-    const timer = setInterval(() => {
+    const updateCountdown = () => {
+      if (isSubmittedRef.current) return;
+
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
       const remain = Math.max(0, totalDurationSeconds - elapsed);
       setTimeLeft(remain);
 
-      if (remain <= 0 && !isSubmittedRef.current) {
-        clearInterval(timer);
-        isSubmittedRef.current = true;
-        handleAutoSubmitTimeUp();
+      if (remain <= 0) {
+        if (!isSubmittedRef.current) {
+          isSubmittedRef.current = true;
+          setShowTimeUpModal(true);
+          handleSubmitFinal('time_up');
+        }
       }
-    }, 1000);
+    };
+
+    // Run once immediately
+    updateCountdown();
+
+    const timer = setInterval(updateCountdown, 1000);
 
     return () => clearInterval(timer);
   }, [totalDurationSeconds]);
@@ -164,75 +243,23 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     }
   };
 
-  // Grade Exam Automatically
-  const calculateFinalGrade = (status: 'submitted' | 'time_up' | 'cheated'): Submission => {
-    let earnedScore = 0;
-    let maxPoints = 0;
-
-    exam.questions.forEach((q) => {
-      const points = q.points || 20;
-      maxPoints += points;
-      if (answers[q.id] === q.correctAnswer) {
-        earnedScore += points;
-      }
-    });
-
-    if (status === 'cheated') {
-      earnedScore = 0;
-    }
-
-    const percentage = maxPoints > 0 ? Math.round((earnedScore / maxPoints) * 100) : 0;
-
-    return {
-      id: submissionId,
-      examToken: exam.token,
-      examTitle: exam.title,
-      studentName,
-      schoolName: schoolName || 'SD NEGERI BANGUNREJO KIDUL 1',
-      gradeName: gradeName || 'Kelas 6',
-      answers,
-      score: earnedScore,
-      maxScore: maxPoints,
-      percentage,
-      status,
-      cheatDetected: status === 'cheated' || cheatCountRef.current > 0,
-      cheatCount: cheatCountRef.current,
-      startedAt: new Date(startTimeRef.current).toISOString(),
-      submittedAt: new Date().toISOString(),
-    };
-  };
-
-  // Final Submit Handler
-  const handleSubmitFinal = async (status: 'submitted' | 'time_up' | 'cheated' = 'submitted') => {
-    isSubmittedRef.current = true;
-    setSubmitting(true);
-    try {
-      const finalSubmission = calculateFinalGrade(status);
-      const docRef = doc(db, 'submissions', submissionId);
-      await setDoc(docRef, finalSubmission, { merge: true });
-      onFinishExam(finalSubmission);
-    } catch (err) {
-      console.error('Submit exam error:', err);
-      alert('Gagal mengirim jawaban ke server. Periksa koneksi internet Anda.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleAutoSubmitTimeUp = () => {
-    handleSubmitFinal('time_up');
-  };
-
   const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
+    const clampedSecs = Math.max(0, secs);
+    const h = Math.floor(clampedSecs / 3600);
+    const m = Math.floor((clampedSecs % 3600) / 60);
+    const s = clampedSecs % 60;
+    if (h > 0) {
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
   const currentQ = exam.questions[currentIdx];
   const answeredCount = Object.keys(answers).length;
   const totalQuestions = exam.questions.length;
-  const isTimeWarning = timeLeft < 120; // less than 2 minutes
+  const isTimeCritical = timeLeft > 0 && timeLeft <= 60; // 1 minute remaining
+  const isTimeWarning = timeLeft > 60 && timeLeft <= 300; // 5 minutes remaining
+  const progressPercent = Math.max(0, Math.min(100, (timeLeft / totalDurationSeconds) * 100));
 
   return (
     <div className="min-h-screen bg-colorful-light-mesh text-slate-800 flex flex-col font-sans">
@@ -264,18 +291,42 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
               </span>
             </div>
 
-            {/* Timer Badge */}
+            {/* Prominent Real-time Countdown Timer Badge */}
             <div
-              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl font-mono font-black text-sm md:text-base shadow-md transition-all ${
-                isTimeWarning
-                  ? 'bg-rose-600 text-white animate-pulse shadow-rose-900/50 border-b-2 border-rose-800'
-                  : 'bg-slate-800 text-indigo-300 border border-slate-700'
+              className={`flex items-center space-x-2 px-3 sm:px-4 py-1.5 rounded-2xl font-mono shadow-md transition-all ${
+                isTimeCritical
+                  ? 'bg-rose-600 text-white animate-pulse border-2 border-rose-400 shadow-[0_0_15px_rgba(225,29,72,0.6)] scale-105'
+                  : isTimeWarning
+                  ? 'bg-amber-500/25 text-amber-300 border-2 border-amber-500/60'
+                  : 'bg-slate-800 text-indigo-200 border-2 border-slate-700'
               }`}
+              title="Hitung Mundur Waktu Ujian"
             >
-              <Clock className="w-4 h-4" />
-              <span>{formatTime(timeLeft)}</span>
+              <Clock className={`w-4 h-4 shrink-0 ${isTimeCritical ? 'animate-spin text-rose-200' : isTimeWarning ? 'text-amber-300' : 'text-indigo-400'}`} />
+              <div className="flex flex-col text-left">
+                <span className="text-[9px] uppercase font-sans font-bold leading-none text-slate-400 tracking-wider">
+                  Sisa Waktu
+                </span>
+                <span className="text-sm sm:text-base font-black tracking-tight leading-tight">
+                  {formatTime(timeLeft)}
+                </span>
+              </div>
             </div>
           </div>
+        </div>
+
+        {/* Real-time Visual Time Remaining Progress Bar along Header */}
+        <div className="w-full bg-slate-800/90 h-1 overflow-hidden mt-3 rounded-full">
+          <div
+            className={`h-full transition-all duration-1000 ease-linear rounded-full ${
+              isTimeCritical
+                ? 'bg-rose-500 animate-pulse'
+                : isTimeWarning
+                ? 'bg-amber-400'
+                : 'bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400'
+            }`}
+            style={{ width: `${progressPercent}%` }}
+          />
         </div>
       </header>
 
@@ -398,6 +449,66 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
 
         {/* Right Column: Question Grid Navigation & Status */}
         <div className="lg:col-span-4 flex flex-col space-y-4">
+          {/* Real-time Countdown Timer Widget */}
+          <div className={`card-3d p-4 border-2 transition-all ${
+            isTimeCritical
+              ? 'bg-rose-50/95 border-rose-300 shadow-md animate-pulse'
+              : isTimeWarning
+              ? 'bg-amber-50/90 border-amber-300'
+              : 'bg-white border-slate-200'
+          }`}>
+            <div className="flex items-center justify-between mb-2.5">
+              <div className="flex items-center space-x-2.5">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shadow-xs ${
+                  isTimeCritical
+                    ? 'bg-rose-600 text-white'
+                    : isTimeWarning
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white'
+                }`}>
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block font-heading">
+                    Sisa Waktu Ujian
+                  </span>
+                  <span className={`text-2xl font-black font-mono tracking-tight leading-none ${
+                    isTimeCritical ? 'text-rose-600' : isTimeWarning ? 'text-amber-700' : 'text-slate-900'
+                  }`}>
+                    {formatTime(timeLeft)}
+                  </span>
+                </div>
+              </div>
+
+              <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-slate-100 text-slate-600 border border-slate-200">
+                Durasi {exam.durationMinutes || 15}m
+              </span>
+            </div>
+
+            {/* Time progress bar */}
+            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden mb-2 border border-slate-200/60">
+              <div
+                className={`h-full rounded-full transition-all duration-1000 ${
+                  isTimeCritical ? 'bg-rose-600' : isTimeWarning ? 'bg-amber-500' : 'bg-gradient-to-r from-indigo-600 to-emerald-500'
+                }`}
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-[10px] font-extrabold text-slate-500">
+              <span>
+                {isTimeCritical ? (
+                  <strong className="text-rose-600 animate-pulse">⚠️ Waktu hampir habis!</strong>
+                ) : isTimeWarning ? (
+                  <strong className="text-amber-600">Kurang dari 5 menit tersisa</strong>
+                ) : (
+                  'Hitung mundur real-time'
+                )}
+              </span>
+              <span className="text-slate-400">Otomatis kirim jika 00:00</span>
+            </div>
+          </div>
+
           <div className="card-3d p-5">
             <h2 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-3 flex items-center justify-between font-heading">
               <span>Navigasi Soal</span>
@@ -542,6 +653,34 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
             >
               Saya Mengerti & Lanjutkan Ujian
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Time's Up Auto-Submit Modal */}
+      {showTimeUpModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="card-3d max-w-sm w-full p-6 text-center space-y-4 bg-white border-2 border-rose-300 shadow-2xl">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-600 via-rose-500 to-amber-500 text-white mx-auto flex items-center justify-center shadow-lg border-b-2 border-rose-800 animate-bounce">
+              <Clock className="w-8 h-8" />
+            </div>
+
+            <div>
+              <span className="inline-block px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 mb-2 border border-rose-200">
+                Waktu Ujian Berakhir
+              </span>
+              <h3 className="text-xl font-black text-slate-900 font-heading">
+                Waktu Ujian Telah Habis!
+              </h3>
+              <p className="text-xs text-slate-600 font-medium leading-relaxed mt-2">
+                Batas waktu pengerjaan telah mencapai <strong>00:00</strong>. Sistem sedang memproses dan mengumpulkan seluruh jawaban Anda secara otomatis ke server...
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center space-x-2 text-xs font-bold text-indigo-700">
+              <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+              <span>Mengirim & Menilai Jawaban Otomatis...</span>
+            </div>
           </div>
         </div>
       )}

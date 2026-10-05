@@ -46,7 +46,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
     e.preventDefault();
     setErrorMsg('');
 
-    const cleanName = studentName.trim();
+    const cleanName = studentName.trim().toUpperCase();
     if (!cleanName) {
       setErrorMsg('Harap masukkan Nama Lengkap Anda.');
       return;
@@ -70,7 +70,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
     e.preventDefault();
     setErrorMsg('');
 
-    const cleanName = studentName.trim();
+    const cleanName = studentName.trim().toUpperCase();
     const cleanToken = token.trim().toUpperCase();
 
     if (!cleanName || !schoolName || !gradeName) {
@@ -204,10 +204,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
                     id="studentNameInput"
                     type="text"
                     required
-                    placeholder="Contoh: Budi Santoso"
+                    placeholder="CONTOH: BUDI SANTOSO"
                     value={studentName}
-                    onChange={(e) => setStudentName(e.target.value)}
-                    className="w-full pl-10 pr-3.5 py-3 text-sm rounded-2xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 bg-slate-50/90 text-slate-900 font-semibold shadow-inner transition-all"
+                    onChange={(e) => setStudentName(e.target.value.toUpperCase())}
+                    className="w-full pl-10 pr-3.5 py-3 text-sm rounded-2xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 bg-slate-50/90 text-slate-900 font-bold uppercase shadow-inner transition-all tracking-wide"
                   />
                 </div>
               </div>

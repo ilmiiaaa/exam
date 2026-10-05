@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck, Building, GraduationCap, ShieldAlert } from 'lucide-react';
+import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck, Building, GraduationCap, ShieldAlert, Clock } from 'lucide-react';
 import { Submission, Exam } from '../types';
 
 interface ResultScreenProps {
@@ -44,6 +44,20 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
               </h4>
               <p className="mt-1 text-rose-800 leading-relaxed font-semibold">
                 Ujian Anda dihentikan secara otomatis dan nilai diset menjadi 0 karena terdeteksi berpindah tab browser atau meminimalkan jendela melebihi batas toleransi 3 kali.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {submission.status === 'time_up' && (
+          <div className="bg-amber-500/15 border-2 border-amber-500/50 rounded-2xl p-4 text-amber-950 text-xs font-bold flex items-start space-x-3 shadow-md">
+            <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="font-black text-sm text-amber-900 font-heading uppercase">
+                ⏰ Waktu Pengerjaan Ujian Habis
+              </h4>
+              <p className="mt-1 text-amber-800 leading-relaxed font-semibold">
+                Ujian telah dikumpulkan dan dinilai secara otomatis oleh sistem saat batas waktu berakhir (00:00). Seluruh jawaban yang sempat Anda pilih telah tersimpan dengan aman.
               </p>
             </div>
           </div>
