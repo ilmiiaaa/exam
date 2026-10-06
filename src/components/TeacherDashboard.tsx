@@ -704,97 +704,144 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
             {/* Filter Bar & Submissions Table */}
             <div className="card-3d overflow-hidden">
-              <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                <div className="relative flex-1 max-w-sm">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Cari nama siswa, sekolah, atau token..."
-                    className="w-full pl-9 pr-3 py-2 bg-white border-2 border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
-                  />
+              <div className="p-4 bg-slate-50 border-b border-slate-200 space-y-3.5">
+                {/* BARIS 1: Pencarian dan Tombol Aksi Utama */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Cari nama siswa, sekolah, atau token..."
+                      className="w-full pl-9 pr-8 py-2 bg-white border-2 border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500 shadow-inner"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Tombol Aksi Utama: Unduh Excel & Hapus Seluruh Hasil Pengerjaan Siswa */}
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleExportExcel}
+                      className="px-4 py-2 rounded-xl btn-3d-emerald text-white text-xs font-black inline-flex items-center space-x-1.5 shadow-md cursor-pointer transition-all active:translate-y-0.5"
+                      title="Unduh Ringkasan Hasil Ujian Format Excel (.xlsx)"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Unduh Excel</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (submissions.length === 0) {
+                          alert('Tidak ada data pengerjaan siswa untuk dihapus.');
+                          return;
+                        }
+                        setShowResetConfirm(true);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white text-xs font-black inline-flex items-center space-x-1.5 shadow-md cursor-pointer transition-all active:translate-y-0.5 border-b-2 border-rose-900"
+                      title="Hapus seluruh hasil pengerjaan ujian siswa di database"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Hapus Seluruh Hasil Siswa</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <div className="flex items-center space-x-1.5">
-                    <label className="text-xs font-bold text-slate-600">Sekolah:</label>
-                    <select
-                      value={selectedSchoolFilter}
-                      onChange={(e) => setSelectedSchoolFilter(e.target.value)}
-                      className="bg-white border-2 border-slate-200 rounded-xl px-2.5 py-2 text-xs font-extrabold focus:outline-none focus:border-indigo-500 max-w-[180px] truncate"
-                    >
-                      <option value="ALL">Semua Sekolah</option>
-                      {SCHOOL_LIST.map(sch => (
-                        <option key={sch} value={sch}>{sch}</option>
-                      ))}
-                    </select>
+                {/* BARIS 2: Baris Filter Dropdown (Sekolah, Kelas, Token, Status) */}
+                <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center space-x-1 mr-1">
+                      <span>Filter Data:</span>
+                    </span>
+
+                    {/* Filter Sekolah */}
+                    <div className="flex items-center space-x-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-xs">
+                      <label className="text-[11px] font-bold text-slate-500">Sekolah:</label>
+                      <select
+                        value={selectedSchoolFilter}
+                        onChange={(e) => setSelectedSchoolFilter(e.target.value)}
+                        className="bg-transparent text-xs font-black text-slate-800 focus:outline-none max-w-[170px] truncate cursor-pointer"
+                      >
+                        <option value="ALL">Semua Sekolah</option>
+                        {SCHOOL_LIST.map(sch => (
+                          <option key={sch} value={sch}>{sch}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Filter Kelas */}
+                    <div className="flex items-center space-x-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-xs">
+                      <label className="text-[11px] font-bold text-slate-500">Kelas:</label>
+                      <select
+                        value={selectedGradeFilter}
+                        onChange={(e) => setSelectedGradeFilter(e.target.value)}
+                        className="bg-transparent text-xs font-black text-slate-800 focus:outline-none cursor-pointer"
+                      >
+                        <option value="ALL">Semua Kelas</option>
+                        {GRADE_LIST.map(grd => (
+                          <option key={grd} value={grd}>{grd}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Filter Token */}
+                    <div className="flex items-center space-x-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-xs">
+                      <label className="text-[11px] font-bold text-slate-500">Token:</label>
+                      <select
+                        value={selectedTokenFilter}
+                        onChange={(e) => setSelectedTokenFilter(e.target.value)}
+                        className="bg-transparent text-xs font-black text-slate-800 focus:outline-none max-w-[160px] truncate cursor-pointer"
+                      >
+                        <option value="ALL">Semua Token</option>
+                        {exams.map(ex => (
+                          <option key={ex.id} value={ex.token}>{ex.token} - {ex.title}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Filter Status */}
+                    <div className="flex items-center space-x-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-xs">
+                      <label className="text-[11px] font-bold text-slate-500">Status:</label>
+                      <select
+                        value={selectedStatusFilter}
+                        onChange={(e) => setSelectedStatusFilter(e.target.value as 'ALL' | 'completed' | 'in_progress')}
+                        className="bg-transparent text-xs font-black text-slate-800 focus:outline-none cursor-pointer"
+                      >
+                        <option value="ALL">Semua Status</option>
+                        <option value="completed">Selesai</option>
+                        <option value="in_progress">Sedang Mengerjakan</option>
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="flex items-center space-x-1.5">
-                    <label className="text-xs font-bold text-slate-600">Kelas:</label>
-                    <select
-                      value={selectedGradeFilter}
-                      onChange={(e) => setSelectedGradeFilter(e.target.value)}
-                      className="bg-white border-2 border-slate-200 rounded-xl px-2.5 py-2 text-xs font-extrabold focus:outline-none focus:border-indigo-500"
+                  {/* Reset All Filters Button */}
+                  {isFilterActive && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSelectedSchoolFilter('ALL');
+                        setSelectedGradeFilter('ALL');
+                        setSelectedTokenFilter('ALL');
+                        setSelectedStatusFilter('ALL');
+                      }}
+                      className="px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl inline-flex items-center space-x-1 transition-all cursor-pointer shadow-xs"
+                      title="Kembalikan semua filter ke awal"
                     >
-                      <option value="ALL">Semua Kelas</option>
-                      {GRADE_LIST.map(grd => (
-                        <option key={grd} value={grd}>{grd}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="flex items-center space-x-1.5">
-                    <label className="text-xs font-bold text-slate-600">Token:</label>
-                    <select
-                      value={selectedTokenFilter}
-                      onChange={(e) => setSelectedTokenFilter(e.target.value)}
-                      className="bg-white border-2 border-slate-200 rounded-xl px-2.5 py-2 text-xs font-extrabold focus:outline-none focus:border-indigo-500"
-                    >
-                      <option value="ALL">Semua Token</option>
-                      {exams.map(ex => (
-                        <option key={ex.id} value={ex.token}>{ex.token} - {ex.title}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="flex items-center space-x-1.5">
-                    <label className="text-xs font-bold text-slate-600">Status:</label>
-                    <select
-                      value={selectedStatusFilter}
-                      onChange={(e) => setSelectedStatusFilter(e.target.value as 'ALL' | 'completed' | 'in_progress')}
-                      className="bg-white border-2 border-slate-200 rounded-xl px-2.5 py-2 text-xs font-extrabold focus:outline-none focus:border-indigo-500"
-                    >
-                      <option value="ALL">Semua Status</option>
-                      <option value="completed">Selesai</option>
-                      <option value="in_progress">Sedang Mengerjakan</option>
-                    </select>
-                  </div>
-
-                  <button
-                    onClick={handleExportExcel}
-                    className="px-3.5 py-2 rounded-xl btn-3d-emerald text-white text-xs font-black inline-flex items-center space-x-1.5 shadow-md cursor-pointer transition-all active:translate-y-0.5"
-                    title="Unduh Ringkasan Hasil Ujian Format Excel (.xlsx)"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Unduh Excel</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if (submissions.length === 0) {
-                        alert('Tidak ada data pengerjaan siswa untuk dihapus.');
-                        return;
-                      }
-                      setShowResetConfirm(true);
-                    }}
-                    className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black inline-flex items-center space-x-1.5 shadow-md cursor-pointer transition-all active:translate-y-0.5 border-b-2 border-rose-800"
-                    title="Hapus seluruh hasil pengerjaan ujian siswa"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Reset Data</span>
-                  </button>
+                      <X className="w-3.5 h-3.5" />
+                      <span>Hapus Filter</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
