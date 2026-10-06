@@ -35,4 +35,5 @@ export interface Submission {
   startedAt: string; // ISO string or timestamp
   submittedAt?: string;
   timeRemainingSeconds?: number;
+  shuffledQuestionIds?: string[];
 }

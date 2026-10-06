@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Send, Cloud, HelpCircle, ShieldAlert } from 'lucide-react';
+import { Clock, CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Send, Cloud, HelpCircle, ShieldAlert, AlertCircle } from 'lucide-react';
 import { doc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Exam, Submission } from '../types';
+import { Exam, Submission, Question } from '../types';
+import { getShuffledQuestionsForStudent } from '../lib/shuffle';
 
 interface ExamScreenProps {
   studentName: string;
@@ -36,11 +37,17 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     `${examToken.toUpperCase()}_${studentName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`
   ).current;
 
+  // Randomize questions uniquely and deterministically for this student
+  const shuffledQuestions = useRef<Question[]>(
+    getShuffledQuestionsForStudent(exam.questions, studentName, examToken)
+  ).current;
+
   const totalDurationSeconds = Math.max(60, (Number(exam.durationMinutes) || 15) * 60);
   const [timeLeft, setTimeLeft] = useState<number>(totalDurationSeconds);
   const startTimeRef = useRef<number>(Date.now());
   const isSubmittedRef = useRef<boolean>(false);
   const [showTimeUpModal, setShowTimeUpModal] = useState<boolean>(false);
+  const [showUnansweredModal, setShowUnansweredModal] = useState<boolean>(false);
   const answersRef = useRef<Record<string, number>>(answers);
 
   // Keep answersRef synced with latest state
@@ -65,6 +72,8 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
         }
         if (data.status && data.status !== 'in_progress') {
           isSubmittedRef.current = true;
+          onFinishExam(data);
+          return;
         }
         if (data.startedAt) {
           const startedMs = new Date(data.startedAt).getTime();
@@ -84,11 +93,12 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
           gradeName: gradeName || 'Kelas 6',
           answers: {},
           score: 0,
-          maxScore: exam.questions.reduce((sum, q) => sum + (q.points || 20), 0),
+          maxScore: shuffledQuestions.reduce((sum, q) => sum + (q.points || 20), 0),
           percentage: 0,
           status: 'in_progress',
           cheatCount: 0,
           startedAt: new Date().toISOString(),
+          shuffledQuestionIds: shuffledQuestions.map(q => q.id),
         };
         await setDoc(docRef, initialSub, { merge: true });
       }
@@ -97,7 +107,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     });
 
     return () => unsubscribe();
-  }, [submissionId, exam, studentName, schoolName, gradeName, totalDurationSeconds]);
+  }, [submissionId, exam, studentName, schoolName, gradeName, totalDurationSeconds, shuffledQuestions, onFinishExam]);
 
   // Anti-Cheating: Detect Tab Switch or Window Minimize
   useEffect(() => {
@@ -141,7 +151,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     let earnedScore = 0;
     let maxPoints = 0;
 
-    exam.questions.forEach((q) => {
+    shuffledQuestions.forEach((q) => {
       const points = q.points || 20;
       maxPoints += points;
       if (currentAnswers[q.id] === q.correctAnswer) {
@@ -172,11 +182,23 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       startedAt: new Date(startTimeRef.current).toISOString(),
       submittedAt: new Date().toISOString(),
       timeRemainingSeconds: Math.max(0, timeLeft),
+      shuffledQuestionIds: shuffledQuestions.map(q => q.id),
     };
   };
 
   // Final Submit Handler
   const handleSubmitFinal = async (status: 'submitted' | 'time_up' | 'cheated' = 'submitted') => {
+    // If student manually submits, verify that all questions are answered
+    if (status === 'submitted') {
+      const currentAnswers = answersRef.current;
+      const missing = shuffledQuestions.filter(q => currentAnswers[q.id] === undefined);
+      if (missing.length > 0) {
+        setShowUnansweredModal(true);
+        setShowConfirmModal(false);
+        return;
+      }
+    }
+
     if (isSubmittedRef.current && status !== 'time_up' && status !== 'cheated') {
       return;
     }
@@ -185,16 +207,35 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     if (status === 'time_up') {
       setShowTimeUpModal(true);
     }
+
+    const finalSubmission = calculateFinalGrade(status);
+
+    // CRITICAL RESILIENCE: Save immediately to localStorage so the app STAYS on ResultScreen across any reload/screenshot
     try {
-      const finalSubmission = calculateFinalGrade(status);
+      localStorage.setItem('exam_edu_active_screen', 'result');
+      localStorage.setItem('exam_edu_current_submission', JSON.stringify(finalSubmission));
+      localStorage.setItem('exam_edu_current_exam', JSON.stringify(exam));
+    } catch (e) {
+      console.warn('LocalStorage save error:', e);
+    }
+
+    try {
       const docRef = doc(db, 'submissions', submissionId);
       await setDoc(docRef, finalSubmission, { merge: true });
-      onFinishExam(finalSubmission);
     } catch (err) {
-      console.error('Submit exam error:', err);
-      alert('Gagal mengirim jawaban ke server. Periksa koneksi internet Anda.');
+      console.error('Submit exam error or offline sync:', err);
+      // Background retry
+      setTimeout(async () => {
+        try {
+          const docRef = doc(db, 'submissions', submissionId);
+          await setDoc(docRef, finalSubmission, { merge: true });
+        } catch (e) {
+          console.error('Background retry failed:', e);
+        }
+      }, 2000);
     } finally {
       setSubmitting(false);
+      onFinishExam(finalSubmission);
     }
   };
 
@@ -254,9 +295,21 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const currentQ = exam.questions[currentIdx];
+  const currentQ = shuffledQuestions[currentIdx];
   const answeredCount = Object.keys(answers).length;
-  const totalQuestions = exam.questions.length;
+  const totalQuestions = shuffledQuestions.length;
+  const unansweredNumbers = shuffledQuestions
+    .map((q, idx) => (answers[q.id] === undefined ? idx + 1 : null))
+    .filter((n): n is number => n !== null);
+  const hasUnanswered = unansweredNumbers.length > 0;
+
+  const handleAttemptFinish = () => {
+    if (hasUnanswered) {
+      setShowUnansweredModal(true);
+    } else {
+      setShowConfirmModal(true);
+    }
+  };
   const isTimeCritical = timeLeft > 0 && timeLeft <= 60; // 1 minute remaining
   const isTimeWarning = timeLeft > 60 && timeLeft <= 300; // 5 minutes remaining
   const progressPercent = Math.max(0, Math.min(100, (timeLeft / totalDurationSeconds) * 100));
@@ -436,7 +489,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
               ) : (
                 <button
                   type="button"
-                  onClick={() => setShowConfirmModal(true)}
+                  onClick={handleAttemptFinish}
                   className="px-5 py-2.5 rounded-xl btn-3d-emerald text-white text-xs font-black flex items-center space-x-1.5 transition-all cursor-pointer"
                 >
                   <Send className="w-3.5 h-3.5" />
@@ -517,7 +570,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
 
             {/* Number Palette Grid */}
             <div className="grid grid-cols-5 gap-2.5 mb-5">
-              {exam.questions.map((q, idx) => {
+              {shuffledQuestions.map((q, idx) => {
                 const isAnswered = answers[q.id] !== undefined;
                 const isCurrent = currentIdx === idx;
 
@@ -559,7 +612,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
             {/* Finish Exam Button */}
             <button
               type="button"
-              onClick={() => setShowConfirmModal(true)}
+              onClick={handleAttemptFinish}
               className="w-full mt-5 py-3.5 px-4 btn-3d-emerald text-white font-black text-xs rounded-2xl flex items-center justify-center space-x-2 transition-all cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
@@ -577,7 +630,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
         </div>
       </main>
 
-      {/* Confirmation Modal */}
+      {/* Confirmation Modal (Only accessible when all questions are answered) */}
       {showConfirmModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="card-3d max-w-sm w-full p-6 text-center space-y-4">
@@ -588,12 +641,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
             <div>
               <h3 className="text-lg font-black text-slate-900 font-heading">Kirim Jawaban Ujian?</h3>
               <p className="text-xs text-slate-500 font-semibold mt-1">
-                Anda telah menjawab <strong>{answeredCount}</strong> dari <strong>{totalQuestions}</strong> soal.
-                {answeredCount < totalQuestions && (
-                  <span className="block text-rose-600 font-extrabold mt-1">
-                    Masih ada {totalQuestions - answeredCount} soal yang belum terisi!
-                  </span>
-                )}
+                Semua <strong>{totalQuestions}</strong> soal telah Anda jawab dengan lengkap.
               </p>
             </div>
 
@@ -607,9 +655,9 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
               </button>
               <button
                 type="button"
-                disabled={submitting}
+                disabled={submitting || hasUnanswered}
                 onClick={() => handleSubmitFinal('submitted')}
-                className="flex-1 py-3 rounded-2xl btn-3d-emerald text-white text-xs font-black flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
+                className="flex-1 py-3 rounded-2xl btn-3d-emerald text-white text-xs font-black flex items-center justify-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
@@ -618,6 +666,68 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unanswered Questions Blocking Modal */}
+      {showUnansweredModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="card-3d max-w-md w-full p-6 text-center space-y-4 bg-white border-2 border-rose-300 shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-rose-500 to-amber-500 text-white mx-auto flex items-center justify-center shadow-md border-b-2 border-rose-700">
+              <AlertCircle className="w-7 h-7" />
+            </div>
+
+            <div>
+              <span className="inline-block px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 mb-2 border border-rose-200">
+                Pemeriksaan Kelengkapan Soal
+              </span>
+              <h3 className="text-xl font-black text-slate-900 font-heading">
+                Jawaban Belum Lengkap!
+              </h3>
+              <p className="text-xs text-slate-600 font-medium leading-relaxed mt-2">
+                Jawaban <strong className="text-rose-600">tidak bisa dikirim</strong> karena masih ada{' '}
+                <strong className="text-rose-600">{unansweredNumbers.length} soal</strong> yang belum Anda kerjakan.
+              </p>
+
+              <div className="mt-4 p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-left">
+                <span className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider block mb-2 font-heading">
+                  Daftar Nomor Soal yang Belum Terisi:
+                </span>
+                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+                  {unansweredNumbers.map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => {
+                        setCurrentIdx(num - 1);
+                        setShowUnansweredModal(false);
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-200 font-black text-xs transition-all cursor-pointer shadow-xs active:scale-95"
+                      title={`Klik untuk langsung mengerjakan nomor ${num}`}
+                    >
+                      No. {num}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-400 font-semibold mt-2">
+                  *Klik salah satu nomor di atas untuk langsung menuju soal tersebut.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (unansweredNumbers.length > 0) {
+                  setCurrentIdx(unansweredNumbers[0] - 1);
+                }
+                setShowUnansweredModal(false);
+              }}
+              className="w-full py-3.5 px-4 btn-3d-indigo text-white text-xs font-black rounded-2xl shadow-md transition-all cursor-pointer flex items-center justify-center space-x-1.5"
+            >
+              <span>Lengkapi Sekarang (Menuju Soal No. {unansweredNumbers[0]})</span>
+            </button>
           </div>
         </div>
       )}

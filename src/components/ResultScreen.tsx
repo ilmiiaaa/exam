@@ -1,6 +1,6 @@
-import React from 'react';
-import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck, Building, GraduationCap, ShieldAlert, Clock } from 'lucide-react';
-import { Submission, Exam } from '../types';
+import React, { useMemo } from 'react';
+import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck, Building, GraduationCap, ShieldAlert, Clock, Printer } from 'lucide-react';
+import { Submission, Exam, Question } from '../types';
 
 interface ResultScreenProps {
   submission: Submission;
@@ -10,6 +10,25 @@ interface ResultScreenProps {
 
 export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, onReset }) => {
   const isPassed = submission.percentage >= 60;
+
+  const handleResetWithConfirm = () => {
+    if (window.confirm("Pastikan Anda sudah menangkap layar (screenshot) atau mencatat hasil ujian Anda!\n\nApakah Anda yakin ingin kembali ke halaman utama/login?")) {
+      onReset();
+    }
+  };
+
+  const handlePrintOrSave = () => {
+    window.print();
+  };
+
+  const displayQuestions = useMemo<Question[]>(() => {
+    if (submission.shuffledQuestionIds && submission.shuffledQuestionIds.length > 0) {
+      const qMap = new Map(exam.questions.map(q => [q.id, q]));
+      const ordered = submission.shuffledQuestionIds.map(id => qMap.get(id)).filter((q): q is Question => q !== undefined);
+      if (ordered.length === exam.questions.length) return ordered;
+    }
+    return exam.questions;
+  }, [exam.questions, submission.shuffledQuestionIds]);
 
   return (
     <div className="min-h-screen bg-colorful-light-mesh text-slate-800 flex flex-col font-sans p-4 md:p-6">
@@ -25,16 +44,39 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
           </div>
         </div>
 
-        <button
-          onClick={onReset}
-          className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 hover:from-amber-300 hover:to-amber-400 transition-all border-b-2 border-amber-600 active:translate-y-0.5 cursor-pointer"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          <span>Ke Beranda</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handlePrintOrSave}
+            className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-black bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 transition-all cursor-pointer shadow-xs active:translate-y-0.5"
+            title="Cetak atau Simpan Bukti Nilai Ujian"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Cetak / Simpan</span>
+          </button>
+
+          <button
+            onClick={handleResetWithConfirm}
+            className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 hover:from-amber-300 hover:to-amber-400 transition-all border-b-2 border-amber-600 active:translate-y-0.5 cursor-pointer shadow-md"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Ke Beranda</span>
+          </button>
+        </div>
       </header>
 
       <main className="max-w-4xl mx-auto w-full my-6 space-y-6">
+        {/* Anti-Exit Screenshot Reminder Banner */}
+        <div className="bg-indigo-950/90 text-white rounded-2xl p-3.5 px-4.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-indigo-800/80 shadow-md">
+          <div className="flex items-center space-x-3 text-xs font-semibold">
+            <span className="text-xl">📸</span>
+            <div>
+              <strong className="text-amber-300 block font-heading text-xs">Penting: Tangkap Layar (Screenshot) Hasil Ujian Anda</strong>
+              <span className="text-slate-300 text-[11px]">
+                Aplikasi akan tetap berada di halaman ini. Simpan atau tangkap layar hasil ini sebagai bukti sah pengerjaan ujian Anda.
+              </span>
+            </div>
+          </div>
+        </div>
         {(submission.status === 'cheated' || submission.cheatDetected) && (
           <div className="bg-rose-500/10 border-2 border-rose-500/40 rounded-2xl p-4 text-rose-950 text-xs font-bold flex items-start space-x-3 shadow-md">
             <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5 animate-bounce" />
@@ -132,7 +174,7 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
           </div>
 
           <div className="space-y-4">
-            {exam.questions.map((q, qIdx) => {
+            {displayQuestions.map((q, qIdx) => {
               const studentAnswerIdx = submission.answers[q.id];
               const isCorrect = studentAnswerIdx === q.correctAnswer;
               const pointsEarned = isCorrect ? (q.points || 20) : 0;

@@ -19,6 +19,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const [selectedTokenFilter, setSelectedTokenFilter] = useState<string>('ALL');
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState<string>('ALL');
   const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>('ALL');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'ALL' | 'completed' | 'in_progress'>('ALL');
 
   // Form State for Exam Creation / Editing
   const [editingExamId, setEditingExamId] = useState<string | null>(null);
@@ -499,7 +500,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
     const matchesToken = selectedTokenFilter === 'ALL' || sub.examToken === selectedTokenFilter;
     const matchesSchool = selectedSchoolFilter === 'ALL' || (sub.schoolName || 'SD NEGERI BANGUNREJO KIDUL 1') === selectedSchoolFilter;
     const matchesGrade = selectedGradeFilter === 'ALL' || (sub.gradeName || 'Kelas 6') === selectedGradeFilter;
-    return matchesSearch && matchesToken && matchesSchool && matchesGrade;
+    const matchesStatus =
+      selectedStatusFilter === 'ALL' ||
+      (selectedStatusFilter === 'completed' && (sub.status === 'submitted' || sub.status === 'time_up' || sub.status === 'cheated')) ||
+      (selectedStatusFilter === 'in_progress' && sub.status === 'in_progress');
+    return matchesSearch && matchesToken && matchesSchool && matchesGrade && matchesStatus;
   });
 
   // Handle Export Excel (.xlsx)
@@ -550,10 +555,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
     XLSX.writeFile(workbook, fileName);
   };
 
-  // Calculate Real-time Statistics
-  const totalParticipants = submissions.length;
-  const completedSubmissions = submissions.filter(s => s.status === 'submitted' || s.status === 'time_up' || s.status === 'cheated');
-  const inProgressCount = submissions.filter(s => s.status === 'in_progress').length;
+  // Calculate Real-time Statistics based on filtered dataset
+  const totalParticipants = filteredSubmissions.length;
+  const completedSubmissions = filteredSubmissions.filter(s => s.status === 'submitted' || s.status === 'time_up' || s.status === 'cheated');
+  const inProgressCount = filteredSubmissions.filter(s => s.status === 'in_progress').length;
   const avgScore = completedSubmissions.length > 0
     ? Math.round(completedSubmissions.reduce((sum, s) => sum + s.percentage, 0) / completedSubmissions.length)
     : 0;
@@ -561,6 +566,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const passRate = completedSubmissions.length > 0
     ? Math.round((passCount / completedSubmissions.length) * 100)
     : 0;
+  const isFilterActive = selectedSchoolFilter !== 'ALL' || selectedGradeFilter !== 'ALL' || selectedTokenFilter !== 'ALL' || selectedStatusFilter !== 'ALL' || searchQuery.trim() !== '';
 
   return (
     <div className="min-h-screen bg-colorful-light-mesh text-slate-800 flex flex-col font-sans">
@@ -636,7 +642,16 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
         {activeTab === 'monitor' && (
           <div className="space-y-6">
             {/* Quick Metrics Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              {isFilterActive && (
+                <div className="flex items-center justify-between mb-2.5 px-1">
+                  <span className="text-[11px] font-extrabold text-indigo-700 bg-indigo-50/90 border border-indigo-200 px-3 py-1 rounded-xl flex items-center space-x-1.5 shadow-xs">
+                    <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                    <span>Statistik diperbarui berdasarkan filter: Menampilkan <strong>{filteredSubmissions.length}</strong> dari <strong>{submissions.length}</strong> total data</span>
+                  </span>
+                </div>
+              )}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="card-3d p-4 border-l-4 border-l-indigo-500 bg-gradient-to-br from-white to-indigo-50/50">
                 <span className="text-[11px] font-bold text-indigo-800 uppercase tracking-wider block mb-1">
                   Total Peserta
@@ -685,6 +700,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                 </div>
               </div>
             </div>
+          </div>
 
             {/* Filter Bar & Submissions Table */}
             <div className="card-3d overflow-hidden">
@@ -740,6 +756,19 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                       {exams.map(ex => (
                         <option key={ex.id} value={ex.token}>{ex.token} - {ex.title}</option>
                       ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center space-x-1.5">
+                    <label className="text-xs font-bold text-slate-600">Status:</label>
+                    <select
+                      value={selectedStatusFilter}
+                      onChange={(e) => setSelectedStatusFilter(e.target.value as 'ALL' | 'completed' | 'in_progress')}
+                      className="bg-white border-2 border-slate-200 rounded-xl px-2.5 py-2 text-xs font-extrabold focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="ALL">Semua Status</option>
+                      <option value="completed">Selesai</option>
+                      <option value="in_progress">Sedang Mengerjakan</option>
                     </select>
                   </div>
 

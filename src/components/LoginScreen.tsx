@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { User, KeyRound, ArrowRight, ShieldCheck, AlertCircle, Sparkles, Lock, X, Building, GraduationCap, ArrowLeft, CheckCircle2 } from 'lucide-react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, getDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Exam } from '../types';
+import { Exam, Submission } from '../types';
 import { SCHOOL_LIST, GRADE_LIST } from '../data/schools';
 
 interface LoginScreenProps {
@@ -100,6 +100,30 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
         setErrorMsg('Ujian ini belum memiliki soal. Harap hubungi pengawas.');
         setLoading(false);
         return;
+      }
+
+      // Check if student has already completed this exam
+      const submissionId = `${cleanToken}_${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+      try {
+        const subDoc = await getDoc(doc(db, 'submissions', submissionId));
+        if (subDoc.exists()) {
+          const subData = subDoc.data() as Submission;
+          if (subData.status && subData.status !== 'in_progress') {
+            try {
+              localStorage.setItem('exam_edu_active_screen', 'result');
+              localStorage.setItem('exam_edu_current_submission', JSON.stringify(subData));
+              localStorage.setItem('exam_edu_current_exam', JSON.stringify(match));
+              localStorage.setItem('exam_edu_student_name', cleanName);
+              localStorage.setItem('exam_edu_student_school', schoolName);
+              localStorage.setItem('exam_edu_student_grade', gradeName);
+              localStorage.setItem('exam_edu_exam_token', cleanToken);
+            } catch (e) {}
+            onStartExam(cleanName, schoolName, gradeName, cleanToken, match);
+            return;
+          }
+        }
+      } catch (checkErr) {
+        console.warn('Check existing submission error:', checkErr);
       }
 
       onStartExam(cleanName, schoolName, gradeName, cleanToken, match);

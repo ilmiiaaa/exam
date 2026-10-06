@@ -9,14 +9,65 @@ import { initializeSeedExams } from './lib/initialData';
 import { ensureAuth } from './lib/firebase';
 
 export default function App() {
-  const [showSplash, setShowSplash] = useState(true);
-  const [screen, setScreen] = useState<'login' | 'exam' | 'result' | 'teacher'>('login');
-  const [studentName, setStudentName] = useState('');
-  const [studentSchool, setStudentSchool] = useState('');
-  const [studentGrade, setStudentGrade] = useState('');
-  const [examToken, setExamToken] = useState('');
-  const [currentExam, setCurrentExam] = useState<Exam | null>(null);
-  const [currentSubmission, setCurrentSubmission] = useState<Submission | null>(null);
+  const [showSplash, setShowSplash] = useState(() => {
+    try {
+      const savedScreen = localStorage.getItem('exam_edu_active_screen');
+      if (savedScreen === 'result') return false;
+    } catch (e) {}
+    return true;
+  });
+
+  const [screen, setScreen] = useState<'login' | 'exam' | 'result' | 'teacher'>(() => {
+    try {
+      const savedScreen = localStorage.getItem('exam_edu_active_screen');
+      if (savedScreen === 'result') {
+        const savedSub = localStorage.getItem('exam_edu_current_submission');
+        const savedExam = localStorage.getItem('exam_edu_current_exam');
+        if (savedSub && savedExam) {
+          return 'result';
+        }
+      }
+    } catch (e) {}
+    return 'login';
+  });
+
+  const [studentName, setStudentName] = useState(() => {
+    try {
+      return localStorage.getItem('exam_edu_student_name') || '';
+    } catch (e) { return ''; }
+  });
+
+  const [studentSchool, setStudentSchool] = useState(() => {
+    try {
+      return localStorage.getItem('exam_edu_student_school') || '';
+    } catch (e) { return ''; }
+  });
+
+  const [studentGrade, setStudentGrade] = useState(() => {
+    try {
+      return localStorage.getItem('exam_edu_student_grade') || '';
+    } catch (e) { return ''; }
+  });
+
+  const [examToken, setExamToken] = useState(() => {
+    try {
+      return localStorage.getItem('exam_edu_exam_token') || '';
+    } catch (e) { return ''; }
+  });
+
+  const [currentExam, setCurrentExam] = useState<Exam | null>(() => {
+    try {
+      const saved = localStorage.getItem('exam_edu_current_exam');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
+  });
+
+  const [currentSubmission, setCurrentSubmission] = useState<Submission | null>(() => {
+    try {
+      const saved = localStorage.getItem('exam_edu_current_submission');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
+  });
 
   // Initialize seed exams & Firebase Auth on app mount
   useEffect(() => {
@@ -31,11 +82,23 @@ export default function App() {
     setExamToken(token);
     setCurrentExam(exam);
     setScreen('exam');
+    try {
+      localStorage.setItem('exam_edu_active_screen', 'exam');
+      localStorage.setItem('exam_edu_student_name', name);
+      localStorage.setItem('exam_edu_student_school', school);
+      localStorage.setItem('exam_edu_student_grade', grade);
+      localStorage.setItem('exam_edu_exam_token', token);
+      localStorage.setItem('exam_edu_current_exam', JSON.stringify(exam));
+    } catch (e) {}
   };
 
   const handleFinishExam = (submission: Submission) => {
     setCurrentSubmission(submission);
     setScreen('result');
+    try {
+      localStorage.setItem('exam_edu_active_screen', 'result');
+      localStorage.setItem('exam_edu_current_submission', JSON.stringify(submission));
+    } catch (e) {}
   };
 
   const handleResetToLogin = () => {
@@ -46,6 +109,15 @@ export default function App() {
     setCurrentExam(null);
     setCurrentSubmission(null);
     setScreen('login');
+    try {
+      localStorage.removeItem('exam_edu_active_screen');
+      localStorage.removeItem('exam_edu_current_submission');
+      localStorage.removeItem('exam_edu_current_exam');
+      localStorage.removeItem('exam_edu_exam_token');
+      localStorage.removeItem('exam_edu_student_name');
+      localStorage.removeItem('exam_edu_student_school');
+      localStorage.removeItem('exam_edu_student_grade');
+    } catch (e) {}
   };
 
   return (
