@@ -47,6 +47,15 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const [showResetRegConfirm, setShowResetRegConfirm] = useState(false);
   const [isResettingReg, setIsResettingReg] = useState(false);
 
+  // Real-time live clock ticker to compute remaining time in seconds
+  const [currentTime, setCurrentTime] = useState<number>(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Form State for Exam Creation / Editing
   const [editingExamId, setEditingExamId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
@@ -906,6 +915,27 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
       'Persentase (%)': sub.percentage,
       'Status Kelulusan': sub.percentage >= 60 ? 'LULUS' : 'TIDAK LULUS',
       'Status Pengerjaan': sub.status === 'submitted' ? 'Selesai' : sub.status === 'time_up' ? 'Waktu Habis' : sub.status === 'cheated' || sub.cheatDetected ? 'Pelanggaran (Pindah Tab)' : 'Sedang Mengerjakan',
+      'WAKTU': sub.status === 'in_progress'
+        ? (() => {
+            const targetExam = exams.find(e => e.token === sub.examToken);
+            const durationMin = targetExam?.durationMinutes || 15;
+            const startMs = sub.startedAt ? new Date(sub.startedAt).getTime() : Date.now();
+            const elapsed = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+            const remain = Math.max(0, durationMin * 60 - elapsed);
+            const m = Math.floor(remain / 60);
+            const s = remain % 60;
+            return `Sedang Mengerjakan (Sisa: ${m}m ${s}d)`;
+          })()
+        : sub.status === 'time_up'
+        ? 'Waktu Habis (00:00)'
+        : sub.status === 'cheated'
+        ? 'Dihentikan'
+        : sub.submittedAt && sub.startedAt
+        ? (() => {
+            const spent = Math.max(0, Math.floor((new Date(sub.submittedAt).getTime() - new Date(sub.startedAt).getTime()) / 1000));
+            return `Selesai (${Math.floor(spent / 60)}m ${spent % 60}d)`;
+          })()
+        : 'Selesai',
       'Waktu Mulai': sub.startedAt ? new Date(sub.startedAt).toLocaleString('id-ID') : '-',
       'Waktu Selesai': sub.submittedAt ? new Date(sub.submittedAt).toLocaleString('id-ID') : '-'
     }));
@@ -926,6 +956,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
       { wch: 15 }, // Persentase (%)
       { wch: 18 }, // Status Kelulusan
       { wch: 20 }, // Status Pengerjaan
+      { wch: 30 }, // WAKTU
       { wch: 22 }, // Waktu Mulai
       { wch: 22 }, // Waktu Selesai
     ];
@@ -1271,7 +1302,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                         <th className="py-3.5 px-4">Status</th>
                         <th className="py-3.5 px-4">Soal Dijawab</th>
                         <th className="py-3.5 px-4">Nilai Akhir</th>
-                        <th className="py-3.5 px-4">Waktu Mulai</th>
+                        <th className="py-3.5 px-4 min-w-[170px]">Waktu</th>
                         <th className="py-3.5 px-4 text-right">Aksi</th>
                       </tr>
                     </thead>
@@ -1348,8 +1379,108 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                                 </div>
                               )}
                             </td>
-                            <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px] font-semibold">
-                              {sub.startedAt ? new Date(sub.startedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}
+                            <td className="py-3.5 px-4 font-semibold">
+                              {(() => {
+                                const durationMinutes = targetExam?.durationMinutes || 15;
+                                const totalDurationSec = durationMinutes * 60;
+                                const startMs = sub.startedAt ? new Date(sub.startedAt).getTime() : currentTime;
+                                const elapsedSec = Math.max(0, Math.floor((currentTime - startMs) / 1000));
+                                const remainingSec = Math.max(0, totalDurationSec - elapsedSec);
+
+                                const formatRemaining = (seconds: number) => {
+                                  const hrs = Math.floor(seconds / 3600);
+                                  const mins = Math.floor((seconds % 3600) / 60);
+                                  const secs = seconds % 60;
+                                  if (hrs > 0) {
+                                    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                                  }
+                                  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                                };
+
+                                const startTimeFormatted = sub.startedAt
+                                  ? new Date(sub.startedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+                                  : '-';
+
+                                if (sub.status === 'in_progress') {
+                                  const isCritical = remainingSec <= 60;
+                                  const isWarning = remainingSec <= 300;
+
+                                  return (
+                                    <div className="space-y-1">
+                                      <div className="flex items-center space-x-1.5">
+                                        <span
+                                          className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-xs font-mono font-black border shadow-xs transition-all ${
+                                            isCritical
+                                              ? 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse'
+                                              : isWarning
+                                              ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                              : 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                                          }`}
+                                        >
+                                          <Clock className={`w-3.5 h-3.5 ${isCritical ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-indigo-600'}`} />
+                                          <span>Sisa: {formatRemaining(remainingSec)}</span>
+                                        </span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 font-semibold flex items-center space-x-1">
+                                        <span>Mulai {startTimeFormatted}</span>
+                                        <span>·</span>
+                                        <span>Durasi {durationMinutes}m</span>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                if (sub.status === 'submitted') {
+                                  const timeSpentSec = sub.submittedAt && sub.startedAt
+                                    ? Math.max(0, Math.floor((new Date(sub.submittedAt).getTime() - new Date(sub.startedAt).getTime()) / 1000))
+                                    : null;
+
+                                  return (
+                                    <div className="space-y-0.5">
+                                      <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                                        <span>
+                                          {timeSpentSec !== null
+                                            ? `Selesai (${Math.floor(timeSpentSec / 60)}m ${timeSpentSec % 60}d)`
+                                            : 'Selesai'}
+                                        </span>
+                                      </span>
+                                      <div className="text-[10px] text-slate-500 font-semibold">
+                                        <span>Mulai {startTimeFormatted}</span>
+                                        {sub.submittedAt && (
+                                          <span> · Selesai {new Date(sub.submittedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                if (sub.status === 'time_up') {
+                                  return (
+                                    <div className="space-y-0.5">
+                                      <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300">
+                                        <Clock className="w-3 h-3 text-slate-500 shrink-0" />
+                                        <span>Waktu Habis (00:00)</span>
+                                      </span>
+                                      <div className="text-[10px] text-slate-500 font-semibold">
+                                        <span>Mulai {startTimeFormatted} · Durasi {durationMinutes}m</span>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div className="space-y-0.5">
+                                    <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                      <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                                      <span>Dihentikan</span>
+                                    </span>
+                                    <div className="text-[10px] text-slate-500 font-semibold">
+                                      <span>Mulai {startTimeFormatted}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td className="py-3.5 px-4 text-right">
                               <div className="flex items-center justify-end space-x-1.5">
