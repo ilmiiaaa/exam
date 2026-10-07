@@ -2260,24 +2260,16 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
               {/* Table */}
               {registeredStudents.length === 0 ? (
-                <div className="text-center py-12 px-4 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 space-y-3">
+                <div className="text-center py-12 px-4 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 space-y-2">
                   <div className="w-14 h-14 rounded-full bg-slate-200 text-slate-400 flex items-center justify-center mx-auto">
                     <Users className="w-7 h-7" />
                   </div>
                   <div>
                     <h4 className="text-sm font-black text-slate-700">Belum Ada Peserta Terdaftar</h4>
                     <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                      Unduh template Excel untuk mendaftarkan peserta secara massal atau gunakan formulir di atas untuk mendaftarkan siswa secara manual.
+                      Gunakan menu <strong>Kelola & Integrasi Data Peserta</strong> di atas untuk mengunduh template dan mengunggah Excel, atau gunakan formulir pendaftaran manual.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleDownloadStudentTemplate}
-                    className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-all shadow-xs cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Unduh Template Excel Sekarang</span>
-                  </button>
                 </div>
               ) : filteredRegisteredStudents.length === 0 ? (
                 <div className="text-center py-8 px-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-500">
