@@ -1,5 +1,7 @@
-import React, { useMemo } from 'react';
-import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck, Building, GraduationCap, ShieldAlert, Clock, Printer } from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { Trophy, CheckCircle2, XCircle, ArrowLeft, RotateCcw, BookOpen, Award, Check, X, ShieldCheck, Building, GraduationCap, ShieldAlert, Clock, Printer, Lock, FileText, CheckCheck } from 'lucide-react';
+import { onSnapshot, doc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { Submission, Exam, Question } from '../types';
 
 interface ResultScreenProps {
@@ -10,6 +12,37 @@ interface ResultScreenProps {
 
 export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, onReset }) => {
   const isPassed = submission.percentage >= 60;
+
+  // Real-time Result Display Setting from Firestore (Default: false / hanya hasil)
+  const [showQuestionsReview, setShowQuestionsReview] = useState<boolean>(() => {
+    if (typeof exam.showReviewAfterExam === 'boolean') {
+      return exam.showReviewAfterExam;
+    }
+    try {
+      const cached = localStorage.getItem('exam_edu_show_questions_review');
+      return cached === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'result_display'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (typeof data.showQuestionsReview === 'boolean') {
+          setShowQuestionsReview(data.showQuestionsReview);
+          try {
+            localStorage.setItem('exam_edu_show_questions_review', String(data.showQuestionsReview));
+          } catch (e) {}
+        }
+      }
+    }, (err) => {
+      console.warn('Result display sync note:', err);
+    });
+
+    return () => unsub();
+  }, []);
 
   const handleResetWithConfirm = () => {
     if (window.confirm("Pastikan Anda sudah menangkap layar (screenshot) atau mencatat hasil ujian Anda!\n\nApakah Anda yakin ingin kembali ke halaman utama/login?")) {
@@ -161,113 +194,197 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
           </div>
         </div>
 
-        {/* Detailed Answer Key Review Section */}
-        <div className="card-3d p-6 space-y-5">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <h3 className="text-base font-black text-slate-900 font-heading flex items-center space-x-2">
-              <BookOpen className="w-5 h-5 text-indigo-600" />
-              <span>Pembahasan Soal & Kunci Jawaban</span>
-            </h3>
-            <span className="text-xs text-slate-500 font-bold bg-slate-100 px-3 py-1 rounded-xl">
-              Penilaian Otomatis
-            </span>
-          </div>
+        {/* Detailed Answer Key Review Section or Locked Results Only */}
+        {showQuestionsReview ? (
+          <div className="card-3d p-6 space-y-5 animate-fadeIn">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-base font-black text-slate-900 font-heading flex items-center space-x-2">
+                <BookOpen className="w-5 h-5 text-indigo-600" />
+                <span>Pembahasan Soal & Kunci Jawaban</span>
+              </h3>
+              <span className="text-xs text-slate-500 font-bold bg-slate-100 px-3 py-1 rounded-xl">
+                Penilaian Otomatis
+              </span>
+            </div>
 
-          <div className="space-y-4">
-            {displayQuestions.map((q, qIdx) => {
-              const studentAnswerIdx = submission.answers[q.id];
-              const isCorrect = studentAnswerIdx === q.correctAnswer;
-              const pointsEarned = isCorrect ? (q.points || 20) : 0;
+            <div className="space-y-4">
+              {displayQuestions.map((q, qIdx) => {
+                const studentAnswerIdx = submission.answers[q.id];
+                const isCorrect = studentAnswerIdx === q.correctAnswer;
+                const pointsEarned = isCorrect ? (q.points || 20) : 0;
 
-              return (
-                <div
-                  key={q.id}
-                  className={`p-4 rounded-2xl border-2 transition-all ${
-                    isCorrect
-                      ? 'bg-emerald-50/60 border-emerald-200'
-                      : 'bg-rose-50/60 border-rose-200'
-                  }`}
-                >
-                  {/* Question header */}
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div className="flex items-start space-x-2">
+                return (
+                  <div
+                    key={q.id}
+                    className={`p-4 rounded-2xl border-2 transition-all ${
+                      isCorrect
+                        ? 'bg-emerald-50/60 border-emerald-200'
+                        : 'bg-rose-50/60 border-rose-200'
+                    }`}
+                  >
+                    {/* Question header */}
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="flex items-start space-x-2">
+                        <span
+                          className={`w-7 h-7 rounded-xl text-xs font-black flex items-center justify-center shrink-0 mt-0.5 border-b-2 ${
+                            isCorrect ? 'bg-emerald-600 border-emerald-800 text-white' : 'bg-rose-600 border-rose-800 text-white'
+                          }`}
+                        >
+                          {qIdx + 1}
+                        </span>
+                        <h4 className="text-sm font-bold text-slate-900 leading-snug">
+                          {q.question}
+                        </h4>
+                      </div>
+
                       <span
-                        className={`w-7 h-7 rounded-xl text-xs font-black flex items-center justify-center shrink-0 mt-0.5 border-b-2 ${
-                          isCorrect ? 'bg-emerald-600 border-emerald-800 text-white' : 'bg-rose-600 border-rose-800 text-white'
+                        className={`text-xs font-black shrink-0 px-3 py-1 rounded-xl border ${
+                          isCorrect
+                            ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                            : 'bg-rose-100 text-rose-900 border-rose-300'
                         }`}
                       >
-                        {qIdx + 1}
+                        {isCorrect ? `+${pointsEarned} Poin` : '0 Poin'}
                       </span>
-                      <h4 className="text-sm font-bold text-slate-900 leading-snug">
-                        {q.question}
-                      </h4>
                     </div>
 
-                    <span
-                      className={`text-xs font-black shrink-0 px-3 py-1 rounded-xl border ${
-                        isCorrect
-                          ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                          : 'bg-rose-100 text-rose-900 border-rose-300'
-                      }`}
-                    >
-                      {isCorrect ? `+${pointsEarned} Poin` : '0 Poin'}
-                    </span>
-                  </div>
+                    {/* Options review */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+                      {q.options.map((opt, oIdx) => {
+                        const isStudentSelected = studentAnswerIdx === oIdx;
+                        const isOptionCorrect = q.correctAnswer === oIdx;
+                        const optionLabel = String.fromCharCode(65 + oIdx);
 
-                  {/* Options review */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
-                    {q.options.map((opt, oIdx) => {
-                      const isStudentSelected = studentAnswerIdx === oIdx;
-                      const isOptionCorrect = q.correctAnswer === oIdx;
-                      const optionLabel = String.fromCharCode(65 + oIdx);
+                        let badgeStyle = 'bg-white border-slate-200 text-slate-700';
+                        if (isOptionCorrect) {
+                          badgeStyle = 'bg-emerald-100 border-emerald-400 text-emerald-950 font-bold shadow-xs';
+                        } else if (isStudentSelected && !isOptionCorrect) {
+                          badgeStyle = 'bg-rose-100 border-rose-400 text-rose-950 font-bold shadow-xs';
+                        }
 
-                      let badgeStyle = 'bg-white border-slate-200 text-slate-700';
-                      if (isOptionCorrect) {
-                        badgeStyle = 'bg-emerald-100 border-emerald-400 text-emerald-950 font-bold shadow-xs';
-                      } else if (isStudentSelected && !isOptionCorrect) {
-                        badgeStyle = 'bg-rose-100 border-rose-400 text-rose-950 font-bold shadow-xs';
-                      }
+                        return (
+                          <div
+                            key={oIdx}
+                            className={`p-3 rounded-xl border-2 text-xs flex items-center justify-between ${badgeStyle}`}
+                          >
+                            <div className="flex items-center space-x-2">
+                              <span className="font-black">{optionLabel}.</span>
+                              <span className="font-semibold">{opt}</span>
+                            </div>
 
-                      return (
-                        <div
-                          key={oIdx}
-                          className={`p-3 rounded-xl border-2 text-xs flex items-center justify-between ${badgeStyle}`}
-                        >
-                          <div className="flex items-center space-x-2">
-                            <span className="font-black">{optionLabel}.</span>
-                            <span className="font-semibold">{opt}</span>
+                            <div className="flex items-center space-x-1 shrink-0">
+                              {isOptionCorrect && (
+                                <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-md flex items-center space-x-0.5 shadow-xs">
+                                  <Check className="w-3 h-3" />
+                                  <span>Kunci</span>
+                                </span>
+                              )}
+                              {isStudentSelected && !isOptionCorrect && (
+                                <span className="text-[10px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-md flex items-center space-x-0.5 shadow-xs">
+                                  <X className="w-3 h-3" />
+                                  <span>Jawaban Anda</span>
+                                </span>
+                              )}
+                            </div>
                           </div>
-
-                          <div className="flex items-center space-x-1 shrink-0">
-                            {isOptionCorrect && (
-                              <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-md flex items-center space-x-0.5 shadow-xs">
-                                <Check className="w-3 h-3" />
-                                <span>Kunci</span>
-                              </span>
-                            )}
-                            {isStudentSelected && !isOptionCorrect && (
-                              <span className="text-[10px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-md flex items-center space-x-0.5 shadow-xs">
-                                <X className="w-3 h-3" />
-                                <span>Jawaban Anda</span>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Explanation if available */}
-                  {q.explanation && (
-                    <div className="mt-3 pt-2 border-t border-slate-200/60 text-xs text-slate-700 font-medium">
-                      <strong>Penjelasan:</strong> {q.explanation}
+                        );
+                      })}
                     </div>
-                  )}
-                </div>
-              );
-            })}
+
+                    {/* Explanation if available */}
+                    {q.explanation && (
+                      <div className="mt-3 pt-2 border-t border-slate-200/60 text-xs text-slate-700 font-medium">
+                        <strong>Penjelasan:</strong> {q.explanation}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        ) : (
+          /* OPSI HANYA HALAMAN HASIL (SOAL & PEMBAHASAN DIKUNCI OLEH PENGAWAS) */
+          <div className="space-y-6 animate-fadeIn">
+            {/* Ringkasan Pengerjaan Siswa */}
+            <div className="card-3d p-6 bg-white border-2 border-slate-200 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <h3 className="text-base font-black text-slate-900 font-heading flex items-center space-x-2">
+                  <FileText className="w-5 h-5 text-indigo-600" />
+                  <span>Ringkasan Hasil Evaluasi Ujian</span>
+                </h3>
+                <span className="text-xs font-black px-3 py-1 rounded-xl bg-indigo-50 text-indigo-800 border border-indigo-200">
+                  Data Tersimpan di Server
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-center">
+                  <span className="text-[11px] font-extrabold text-slate-500 uppercase block mb-1">
+                    Total Soal
+                  </span>
+                  <span className="text-xl font-black text-slate-900">
+                    {exam.questions.length} Soal
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200 text-center">
+                  <span className="text-[11px] font-extrabold text-indigo-700 uppercase block mb-1">
+                    Soal Dijawab
+                  </span>
+                  <span className="text-xl font-black text-indigo-900">
+                    {Object.keys(submission.answers || {}).length} Soal
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-center">
+                  <span className="text-[11px] font-extrabold text-emerald-700 uppercase block mb-1">
+                    Nilai Akhir
+                  </span>
+                  <span className="text-xl font-black text-emerald-900">
+                    {submission.percentage}%
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-purple-50/70 border border-purple-200 text-center">
+                  <span className="text-[11px] font-extrabold text-purple-700 uppercase block mb-1">
+                    Status
+                  </span>
+                  <span className={`text-sm font-black px-2 py-0.5 rounded-lg inline-block ${
+                    isPassed ? 'text-emerald-700 bg-emerald-100' : 'text-rose-700 bg-rose-100'
+                  }`}>
+                    {isPassed ? 'LULUS' : 'REMIDI'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Official Proctored Security Notice Card */}
+            <div className="card-3d p-6 md:p-8 bg-white border-2 border-indigo-200 rounded-3xl text-center space-y-4 shadow-sm">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 border-2 border-indigo-200 text-indigo-600 flex items-center justify-center mx-auto shadow-inner">
+                <Lock className="w-8 h-8 text-indigo-600" />
+              </div>
+
+              <div className="max-w-lg mx-auto space-y-2">
+                <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-[11px] font-black border border-slate-200">
+                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>KEBIJAKAN KERAHASIAAN SOAL UJIAN</span>
+                </div>
+
+                <h3 className="text-lg font-black text-slate-900 font-heading">
+                  Naskah Soal & Kunci Jawaban Ditutup
+                </h3>
+
+                <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                  Sesuai kebijakan pengawas/guru, <strong>siswa hanya dapat melihat ringkasan hasil dan nilai akhir</strong>. Naskah butir soal, rincian pilihan jawaban, kunci jawaban yang benar, dan pembahasan tidak ditampilkan untuk menjaga integritas dan kerahasiaan evaluasi ujian.
+                </p>
+              </div>
+
+              <div className="pt-2 text-xs font-semibold text-slate-500">
+                Data pengerjaan Anda telah terekam secara resmi pada database sekolah.
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer Actions */}
         <div className="flex items-center justify-center space-x-3 pt-2">

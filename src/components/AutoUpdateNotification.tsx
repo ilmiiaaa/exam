@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
 import { onSnapshot, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { probeServerAssetsUpdate } from '../lib/appUpdateManager';
+import { probeServerAssetsUpdate, checkFirestoreSystemUpdate } from '../lib/appUpdateManager';
 
 interface AutoUpdateNotificationProps {
   currentScreen: 'login' | 'exam' | 'result' | 'teacher';
@@ -11,21 +11,25 @@ interface AutoUpdateNotificationProps {
 export const AutoUpdateNotification: React.FC<AutoUpdateNotificationProps> = ({ currentScreen }) => {
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateMessage, setUpdateMessage] = useState('');
-  const lastKnownVersionRef = useRef<number>(() => {
+  
+  // Stored version timestamp
+  const getStoredVersionTime = (): number => {
     try {
-      return Number(localStorage.getItem('exam_edu_last_known_version_time')) || Date.now();
+      const val = localStorage.getItem('exam_edu_last_known_version_time');
+      return val ? Number(val) : 0;
     } catch {
-      return Date.now();
+      return 0;
     }
-  });
+  };
 
+  const lastKnownVersionRef = useRef<number>(getStoredVersionTime());
   const isReloadingRef = useRef(false);
 
   // Perform clean reload with cache-busting
   const triggerAppReload = (message: string) => {
     if (isReloadingRef.current) return;
 
-    // Safety: If student is taking an exam, DO NOT reload to avoid disrupting them!
+    // Safety: If student is actively taking an exam, DO NOT reload to avoid disrupting them!
     if (currentScreen === 'exam') {
       console.log('Exam in progress, postponing full page reload.');
       return;
@@ -36,12 +40,18 @@ export const AutoUpdateNotification: React.FC<AutoUpdateNotificationProps> = ({ 
     setUpdateMessage(message);
 
     setTimeout(() => {
-      // Force cache-busting reload
-      window.location.reload();
+      // Force cache-busting reload by updating search params or hash
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('_sync', String(Date.now()));
+        window.location.replace(url.toString());
+      } catch (e) {
+        window.location.reload();
+      }
     }, 1200);
   };
 
-  // Check for updates on demand (mount and resume from background)
+  // Check for updates on demand (when app is opened, resumed from background/minimize)
   const checkForUpdates = async (triggerReason: string) => {
     if (isReloadingRef.current || currentScreen === 'exam') return;
 
@@ -49,7 +59,21 @@ export const AutoUpdateNotification: React.FC<AutoUpdateNotificationProps> = ({ 
       // 1. Check if newer build scripts/assets exist on the server
       const hasAssetsUpdate = await probeServerAssetsUpdate();
       if (hasAssetsUpdate) {
-        triggerAppReload('Pembaruan sistem baru tersedia. Memperbarui halaman...');
+        triggerAppReload('Versi aplikasi baru tersedia. Memperbarui halaman...');
+        return;
+      }
+
+      // 2. Check if Firestore has a newer system version broadcast
+      const currentStored = lastKnownVersionRef.current || getStoredVersionTime();
+      const firestoreUpdate = await checkFirestoreSystemUpdate(currentStored);
+      if (firestoreUpdate.hasUpdate) {
+        lastKnownVersionRef.current = firestoreUpdate.timestamp;
+        try {
+          localStorage.setItem('exam_edu_last_known_version_time', String(firestoreUpdate.timestamp));
+        } catch (e) {}
+
+        const note = firestoreUpdate.notes ? `: ${firestoreUpdate.notes}` : '';
+        triggerAppReload(`Pembaruan sistem terdeteksi${note}. Memperbarui aplikasi...`);
         return;
       }
     } catch (e) {
@@ -57,7 +81,7 @@ export const AutoUpdateNotification: React.FC<AutoUpdateNotificationProps> = ({ 
     }
   };
 
-  // 1. Check for update on initial mount
+  // 1. Check for update on initial mount (when app is opened)
   useEffect(() => {
     checkForUpdates('mount');
   }, []);
@@ -70,7 +94,7 @@ export const AutoUpdateNotification: React.FC<AutoUpdateNotificationProps> = ({ 
         const remoteTime = Number(data.timestamp) || 0;
         const localTime = lastKnownVersionRef.current;
 
-        if (remoteTime > localTime) {
+        if (localTime > 0 && remoteTime > localTime) {
           lastKnownVersionRef.current = remoteTime;
           try {
             localStorage.setItem('exam_edu_last_known_version_time', String(remoteTime));
@@ -92,7 +116,7 @@ export const AutoUpdateNotification: React.FC<AutoUpdateNotificationProps> = ({ 
     return () => unsub();
   }, [currentScreen]);
 
-  // 3. Mobile Lifecycle Listeners: Detect when app is resumed after being minimized / in recent apps
+  // 3. Mobile Lifecycle Listeners: Detect when app is opened or resumed after being minimized (recent apps)
   useEffect(() => {
     const handleAppResumed = () => {
       if (document.visibilityState === 'visible') {
@@ -120,11 +144,19 @@ export const AutoUpdateNotification: React.FC<AutoUpdateNotificationProps> = ({ 
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('online', handleOnline);
 
+    // Periodic check every 30 seconds when app is active (idle safeguard)
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        checkForUpdates('periodic');
+      }
+    }, 30000);
+
     return () => {
       document.removeEventListener('visibilitychange', handleAppResumed);
       window.removeEventListener('pageshow', handlePageShow);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('online', handleOnline);
+      clearInterval(interval);
     };
   }, [currentScreen]);
 

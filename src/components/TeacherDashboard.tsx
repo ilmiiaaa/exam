@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap, RotateCcw, Upload, FileSpreadsheet, FileText, UserCheck, UserPlus, Check, Filter, Info, ChevronRight, FileDown } from 'lucide-react';
+import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap, RotateCcw, Upload, FileSpreadsheet, FileText, UserCheck, UserPlus, Check, Filter, Info, ChevronRight, FileDown, Eye, EyeOff, Lock } from 'lucide-react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 import { db } from '../lib/firebase';
@@ -80,6 +80,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const [newSubject, setNewSubject] = useState('');
   const [newToken, setNewToken] = useState('');
   const [newDuration, setNewDuration] = useState(15);
+  const [newShowReview, setNewShowReview] = useState<boolean>(false);
   const [questions, setQuestions] = useState<Question[]>([
     {
       id: 'q_' + Date.now(),
@@ -91,6 +92,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   ]);
   const [createMsg, setCreateMsg] = useState('');
   const [createError, setCreateError] = useState('');
+
+  // Global Result Display Setting State (Show/Hide questions+answers+explanations after exam)
+  const [showQuestionsReview, setShowQuestionsReview] = useState<boolean>(false);
+  const [isUpdatingResultSetting, setIsUpdatingResultSetting] = useState(false);
+  const [resultSettingMsg, setResultSettingMsg] = useState('');
 
   // Modal State for Editing Student Submission
   const [editingSubmission, setEditingSubmission] = useState<Submission | null>(null);
@@ -191,6 +197,51 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
     return () => unsubStudents();
   }, []);
+
+  // 5. Subscribe Real-time Result Display Settings (Show/Hide review questions+answers)
+  useEffect(() => {
+    const unsubResult = onSnapshot(doc(db, 'settings', 'result_display'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (typeof data.showQuestionsReview === 'boolean') {
+          setShowQuestionsReview(data.showQuestionsReview);
+        }
+      }
+    }, (err) => {
+      console.warn('Real-time result display setting sync note:', err);
+    });
+
+    return () => unsubResult();
+  }, []);
+
+  // Handler to update global Result Display Settings in Firestore
+  const handleSetShowQuestionsReview = async (showReview: boolean) => {
+    setIsUpdatingResultSetting(true);
+    setResultSettingMsg('');
+    try {
+      await setDoc(doc(db, 'settings', 'result_display'), {
+        showQuestionsReview: showReview,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      setShowQuestionsReview(showReview);
+      setResultSettingMsg(
+        showReview
+          ? 'Pengaturan tersimpan: Siswa DAPAT melihat soal, jawaban, dan pembahasan setelah ujian.'
+          : 'Pengaturan tersimpan: Siswa HANYA melihat halaman hasil nilai (soal & kunci jawaban dikunci).'
+      );
+      setTimeout(() => setResultSettingMsg(''), 4000);
+      broadcastSystemUpdate(
+        showReview
+          ? 'Tampilan hasil: Pembahasan dibuka'
+          : 'Tampilan hasil: Pembahasan dikunci (hanya hasil)'
+      ).catch(console.warn);
+    } catch (err) {
+      console.error('Error saving result display setting:', err);
+      alert('Gagal menyimpan pengaturan: ' + (err as Error).message);
+    } finally {
+      setIsUpdatingResultSetting(false);
+    }
+  };
 
   // Update Participant System Mode in Firestore
   const handleSetParticipantMode = async (mode: ParticipantSystemMode) => {
@@ -1564,7 +1615,161 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
         {/* TAB 2: MANAGE TOKENS & CREATE / EDIT EXAMS */}
         {activeTab === 'manage' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="space-y-6">
+            {/* OPSI SISTEM: VISIBILITAS HASIL UJIAN SISWA (SOAL + JAWABAN + PENJELASAN) */}
+            <div className="card-3d p-5 md:p-6 bg-white border-2 border-indigo-200/80 rounded-3xl space-y-4 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div className="flex items-center space-x-3">
+                  <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shadow-xs shrink-0 ${
+                    !showQuestionsReview
+                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                      : 'bg-indigo-100 text-indigo-700 border border-indigo-300'
+                  }`}>
+                    {!showQuestionsReview ? <Lock className="w-5 h-5 text-amber-700" /> : <Eye className="w-5 h-5 text-indigo-600" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <h3 className="text-base font-black text-slate-900 font-heading">
+                        Opsi Sistem: Visibilitas Hasil Ujian Siswa
+                      </h3>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                        Otomatis Berlaku ke Siswa
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Atur apakah siswa setelah selesai ujian hanya melihat halaman hasil nilai, atau dapat melihat naskah soal + jawaban + penjelasan.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="shrink-0 flex items-center space-x-2">
+                  <span className="text-xs font-bold text-slate-500">Status Saat Ini:</span>
+                  <span className={`px-3 py-1 rounded-xl text-xs font-black shadow-xs ${
+                    !showQuestionsReview
+                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                      : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                  }`}>
+                    {!showQuestionsReview ? '🔒 HANYA HALAMAN HASIL' : '📖 PEMBAHASAN LENGKAP'}
+                  </span>
+                </div>
+              </div>
+
+              {resultSettingMsg && (
+                <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center space-x-2 animate-fadeIn">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{resultSettingMsg}</span>
+                </div>
+              )}
+
+              {/* 2 Options Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Opsi 1: Hanya Halaman Hasil (Terkunci) */}
+                <div
+                  onClick={() => !isUpdatingResultSetting && handleSetShowQuestionsReview(false)}
+                  className={`p-4.5 rounded-2xl border-2 transition-all cursor-pointer relative flex flex-col justify-between ${
+                    !showQuestionsReview
+                      ? 'border-amber-500 ring-4 ring-amber-500/10 bg-amber-50/30'
+                      : 'border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-white'
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${
+                          !showQuestionsReview ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-700'
+                        }`}>
+                          <Lock className="w-4 h-4" />
+                        </div>
+                        <h4 className="text-sm font-black text-slate-900 font-heading">
+                          Hanya Halaman Hasil (Disarankan)
+                        </h4>
+                      </div>
+                      {!showQuestionsReview && (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-600 text-white flex items-center space-x-1 shadow-xs">
+                          <Check className="w-3 h-3" />
+                          <span>AKTIF</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                      Siswa <strong>hanya melihat skor, nilai akhir, persentase kelulusan, dan status</strong>. Naskah soal, rincian jawaban siswa, kunci jawaban, dan penjelasan <strong>TIDAK BISA LAGI DILIHAT</strong> untuk menjaga kerahasiaan evaluasi ujian.
+                    </p>
+                  </div>
+
+                  <div className="pt-3 mt-2 border-t border-slate-200/60">
+                    <button
+                      type="button"
+                      disabled={!showQuestionsReview || isUpdatingResultSetting}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSetShowQuestionsReview(false);
+                      }}
+                      className={`w-full py-2 px-3 rounded-xl text-xs font-black transition-all ${
+                        !showQuestionsReview
+                          ? 'bg-amber-100 text-amber-900 cursor-default'
+                          : 'btn-3d-amber text-slate-950 cursor-pointer'
+                      }`}
+                    >
+                      {!showQuestionsReview ? '✓ Opsi Ini Sedang Digunakan' : 'Gunakan: Hanya Halaman Hasil'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Opsi 2: Tampilkan Soal + Jawaban + Penjelasan */}
+                <div
+                  onClick={() => !isUpdatingResultSetting && handleSetShowQuestionsReview(true)}
+                  className={`p-4.5 rounded-2xl border-2 transition-all cursor-pointer relative flex flex-col justify-between ${
+                    showQuestionsReview
+                      ? 'border-emerald-500 ring-4 ring-emerald-500/10 bg-emerald-50/30'
+                      : 'border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-white'
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${
+                          showQuestionsReview ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-700'
+                        }`}>
+                          <BookOpen className="w-4 h-4" />
+                        </div>
+                        <h4 className="text-sm font-black text-slate-900 font-heading">
+                          Tampilkan Soal + Jawaban + Penjelasan
+                        </h4>
+                      </div>
+                      {showQuestionsReview && (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white flex items-center space-x-1 shadow-xs">
+                          <Check className="w-3 h-3" />
+                          <span>AKTIF</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                      Siswa <strong>dapat meninjau seluruh naskah soal</strong>, melihat jawaban yang mereka pilih, melihat kunci jawaban yang benar, serta membaca penjelasan/pembahasan setiap butir soal setelah menyelesaikan ujian.
+                    </p>
+                  </div>
+
+                  <div className="pt-3 mt-2 border-t border-slate-200/60">
+                    <button
+                      type="button"
+                      disabled={showQuestionsReview || isUpdatingResultSetting}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSetShowQuestionsReview(true);
+                      }}
+                      className={`w-full py-2 px-3 rounded-xl text-xs font-black transition-all ${
+                        showQuestionsReview
+                          ? 'bg-emerald-100 text-emerald-900 cursor-default'
+                          : 'btn-3d-emerald text-white cursor-pointer'
+                      }`}
+                    >
+                      {showQuestionsReview ? '✓ Opsi Ini Sedang Digunakan' : 'Gunakan: Tampilkan Pembahasan'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Left Column: Create / Edit Exam Form */}
             <div className="lg:col-span-7 card-3d p-5 md:p-6 space-y-5">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1881,6 +2086,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
               </div>
             </div>
           </div>
+          </div>
         )}
 
         {/* TAB 3: PENGATURAN SISTEM PESERTA UJIAN */}
@@ -2053,6 +2259,159 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                       <span>Gunakan Sistem Peserta Terdaftar</span>
                     )}
                   </button>
+                </div>
+              </div>
+            </div>
+
+            {/* PENGATURAN SISTEM TAMBAHAN: VISIBILITAS HASIL UJIAN SISWA */}
+            <div className="card-3d p-5 md:p-6 bg-white border-2 border-indigo-200/80 rounded-3xl space-y-4 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div className="flex items-center space-x-3">
+                  <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shadow-xs shrink-0 ${
+                    !showQuestionsReview
+                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                      : 'bg-indigo-100 text-indigo-700 border border-indigo-300'
+                  }`}>
+                    {!showQuestionsReview ? <Lock className="w-5 h-5 text-amber-700" /> : <Eye className="w-5 h-5 text-indigo-600" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <h3 className="text-base font-black text-slate-900 font-heading">
+                        Opsi Sistem: Visibilitas Hasil Ujian Siswa
+                      </h3>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                        Otomatis Sinkron ke Siswa
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Atur apakah siswa ketika selesai ujian hanya melihat halaman hasil nilai, atau dapat melihat naskah soal + jawaban + penjelasan.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="shrink-0 flex items-center space-x-2">
+                  <span className="text-xs font-bold text-slate-500">Status Saat Ini:</span>
+                  <span className={`px-3 py-1 rounded-xl text-xs font-black shadow-xs ${
+                    !showQuestionsReview
+                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                      : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                  }`}>
+                    {!showQuestionsReview ? '🔒 HANYA HALAMAN HASIL' : '📖 PEMBAHASAN LENGKAP'}
+                  </span>
+                </div>
+              </div>
+
+              {resultSettingMsg && (
+                <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center space-x-2 animate-fadeIn">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{resultSettingMsg}</span>
+                </div>
+              )}
+
+              {/* 2 Options Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Opsi 1: Hanya Halaman Hasil */}
+                <div
+                  onClick={() => !isUpdatingResultSetting && handleSetShowQuestionsReview(false)}
+                  className={`p-4.5 rounded-2xl border-2 transition-all cursor-pointer relative flex flex-col justify-between ${
+                    !showQuestionsReview
+                      ? 'border-amber-500 ring-4 ring-amber-500/10 bg-amber-50/30'
+                      : 'border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-white'
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${
+                          !showQuestionsReview ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-700'
+                        }`}>
+                          <Lock className="w-4 h-4" />
+                        </div>
+                        <h4 className="text-sm font-black text-slate-900 font-heading">
+                          Hanya Halaman Hasil (Disarankan)
+                        </h4>
+                      </div>
+                      {!showQuestionsReview && (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-600 text-white flex items-center space-x-1 shadow-xs">
+                          <Check className="w-3 h-3" />
+                          <span>AKTIF</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                      Siswa <strong>hanya melihat skor, nilai akhir, persentase kelulusan, dan status</strong>. Naskah soal, rincian jawaban siswa, kunci jawaban, dan penjelasan <strong>TIDAK BISA LAGI DILIHAT</strong> untuk menjaga kerahasiaan evaluasi ujian.
+                    </p>
+                  </div>
+
+                  <div className="pt-3 mt-2 border-t border-slate-200/60">
+                    <button
+                      type="button"
+                      disabled={!showQuestionsReview || isUpdatingResultSetting}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSetShowQuestionsReview(false);
+                      }}
+                      className={`w-full py-2 px-3 rounded-xl text-xs font-black transition-all ${
+                        !showQuestionsReview
+                          ? 'bg-amber-100 text-amber-900 cursor-default'
+                          : 'btn-3d-amber text-slate-950 cursor-pointer'
+                      }`}
+                    >
+                      {!showQuestionsReview ? '✓ Opsi Ini Sedang Digunakan' : 'Gunakan: Hanya Halaman Hasil'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Opsi 2: Tampilkan Soal + Jawaban + Penjelasan */}
+                <div
+                  onClick={() => !isUpdatingResultSetting && handleSetShowQuestionsReview(true)}
+                  className={`p-4.5 rounded-2xl border-2 transition-all cursor-pointer relative flex flex-col justify-between ${
+                    showQuestionsReview
+                      ? 'border-emerald-500 ring-4 ring-emerald-500/10 bg-emerald-50/30'
+                      : 'border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-white'
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${
+                          showQuestionsReview ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-700'
+                        }`}>
+                          <BookOpen className="w-4 h-4" />
+                        </div>
+                        <h4 className="text-sm font-black text-slate-900 font-heading">
+                          Tampilkan Soal + Jawaban + Penjelasan
+                        </h4>
+                      </div>
+                      {showQuestionsReview && (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white flex items-center space-x-1 shadow-xs">
+                          <Check className="w-3 h-3" />
+                          <span>AKTIF</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                      Siswa <strong>dapat meninjau seluruh naskah soal</strong>, melihat jawaban yang mereka pilih, melihat kunci jawaban yang benar, serta membaca penjelasan/pembahasan setiap butir soal setelah menyelesaikan ujian.
+                    </p>
+                  </div>
+
+                  <div className="pt-3 mt-2 border-t border-slate-200/60">
+                    <button
+                      type="button"
+                      disabled={showQuestionsReview || isUpdatingResultSetting}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSetShowQuestionsReview(true);
+                      }}
+                      className={`w-full py-2 px-3 rounded-xl text-xs font-black transition-all ${
+                        showQuestionsReview
+                          ? 'bg-emerald-100 text-emerald-900 cursor-default'
+                          : 'btn-3d-emerald text-white cursor-pointer'
+                      }`}
+                    >
+                      {showQuestionsReview ? '✓ Opsi Ini Sedang Digunakan' : 'Gunakan: Tampilkan Pembahasan'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

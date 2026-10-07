@@ -16,6 +16,7 @@ export interface Exam {
   questions: Question[];
   createdAt: string;
   active: boolean;
+  showReviewAfterExam?: boolean; // If false/undefined, student cannot view questions, answers, and explanations
 }
 
 export interface Submission {
@@ -50,5 +51,10 @@ export interface RegisteredStudent {
 
 export interface ParticipantSystemSettings {
   mode: ParticipantSystemMode;
+  updatedAt?: string;
+}
+
+export interface ResultDisplaySettings {
+  showQuestionsReview: boolean; // default false: siswa hanya melihat halaman hasil
   updatedAt?: string;
 }
