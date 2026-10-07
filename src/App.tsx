@@ -4,6 +4,7 @@ import { ExamScreen } from './components/ExamScreen';
 import { ResultScreen } from './components/ResultScreen';
 import { TeacherDashboard } from './components/TeacherDashboard';
 import { SplashScreen } from './components/SplashScreen';
+import { AutoUpdateNotification } from './components/AutoUpdateNotification';
 import { Exam, Submission } from './types';
 import { initializeSeedExams } from './lib/initialData';
 import { ensureAuth } from './lib/firebase';
@@ -122,6 +123,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 font-sans antialiased">
+      {/* Real-time System Auto-Update & Mobile Resume Sync */}
+      <AutoUpdateNotification currentScreen={screen} />
+
       {showSplash && (
         <SplashScreen onFinish={() => setShowSplash(false)} />
       )}

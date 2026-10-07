@@ -6,6 +6,7 @@ import { db } from '../lib/firebase';
 import { Exam, Submission, Question, RegisteredStudent, ParticipantSystemMode } from '../types';
 import { initializeSeedExams } from '../lib/initialData';
 import { SCHOOL_LIST, GRADE_LIST } from '../data/schools';
+import { broadcastSystemUpdate } from '../lib/appUpdateManager';
 
 interface TeacherDashboardProps {
   onBackToStudentLogin: () => void;
@@ -20,6 +21,23 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState<string>('ALL');
   const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>('ALL');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<'ALL' | 'completed' | 'in_progress'>('ALL');
+
+  // Broadcast System Update state
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [broadcastSuccessMsg, setBroadcastSuccessMsg] = useState('');
+
+  const handleManualBroadcastUpdate = async () => {
+    setIsBroadcasting(true);
+    try {
+      await broadcastSystemUpdate('Pembaruan data ujian & sistem oleh Guru');
+      setBroadcastSuccessMsg('Sinyal pembaruan sistem berhasil disiarkan! Semua perangkat siswa (yang aktif maupun di recent apps) akan otomatis memperbarui halaman.');
+      setTimeout(() => setBroadcastSuccessMsg(''), 4500);
+    } catch (err) {
+      alert('Gagal menyiarkan pembaruan: ' + (err as Error).message);
+    } finally {
+      setIsBroadcasting(false);
+    }
+  };
 
   // Participant System Mode & Registered Students State
   const [participantMode, setParticipantMode] = useState<ParticipantSystemMode>('umum');
@@ -186,6 +204,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
       setParticipantMode(mode);
       setModeSaveMsg(`Sistem pendaftaran berhasil dialihkan ke: ${mode === 'umum' ? 'Peserta Umum' : 'Peserta Terdaftar'}`);
       setTimeout(() => setModeSaveMsg(''), 4000);
+      broadcastSystemUpdate(`Mode peserta dialihkan ke: ${mode === 'umum' ? 'Umum' : 'Terdaftar'}`).catch(console.warn);
     } catch (err) {
       console.error('Error updating participant mode:', err);
       alert('Gagal mengubah mode sistem peserta: ' + (err as Error).message);
@@ -793,6 +812,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
       }
 
       await setDoc(doc(db, 'exams', cleanToken), newExamObj);
+      broadcastSystemUpdate(`Ujian [${cleanToken}] diperbarui`).catch(console.warn);
 
       if (editingExamId) {
         setCreateMsg(`Berhasil memperbarui Token Ujian [${cleanToken}]!`);
@@ -811,6 +831,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const toggleExamStatus = async (examId: string, currentActive: boolean) => {
     try {
       await updateDoc(doc(db, 'exams', examId), { active: !currentActive });
+      broadcastSystemUpdate(`Status ujian [${examId}] diubah`).catch(console.warn);
     } catch (err) {
       console.error('Failed to toggle exam status:', err);
     }
@@ -820,6 +841,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
     if (confirm(`Yakin ingin menghapus Token Ujian [${examId}]?`)) {
       try {
         await deleteDoc(doc(db, 'exams', examId));
+        broadcastSystemUpdate(`Ujian [${examId}] dihapus`).catch(console.warn);
         if (editingExamId === examId) {
           handleCancelEditExam();
         }
@@ -1008,7 +1030,27 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
             </div>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2 sm:space-x-3">
+            <button
+              type="button"
+              disabled={isBroadcasting}
+              onClick={handleManualBroadcastUpdate}
+              title="Kirim sinyal pembaruan sistem ke seluruh perangkat siswa (yang sedang aktif atau diminimize)"
+              className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-500 text-white transition-all border border-indigo-400 shadow-xs cursor-pointer disabled:opacity-50"
+            >
+              {isBroadcasting ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span className="hidden sm:inline">Menyiarkan...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span className="hidden sm:inline">Siarkan Update Sistem</span>
+                </>
+              )}
+            </button>
+
             <button
               onClick={onBackToStudentLogin}
               className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-slate-800/90 hover:bg-slate-700 text-slate-100 transition-all border border-slate-700 shadow-xs cursor-pointer"
@@ -1018,6 +1060,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
             </button>
           </div>
         </div>
+
+        {broadcastSuccessMsg && (
+          <div className="max-w-7xl mx-auto mt-2.5 p-3 rounded-2xl bg-emerald-500/20 border border-emerald-400/50 text-emerald-200 text-xs font-bold flex items-center space-x-2 animate-fadeIn">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{broadcastSuccessMsg}</span>
+          </div>
+        )}
       </header>
 
       {/* Main Dashboard Layout */}
