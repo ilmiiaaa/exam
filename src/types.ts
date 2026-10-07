@@ -37,3 +37,18 @@ export interface Submission {
   timeRemainingSeconds?: number;
   shuffledQuestionIds?: string[];
 }
+
+export type ParticipantSystemMode = 'umum' | 'terdaftar';
+
+export interface RegisteredStudent {
+  id: string;
+  name: string;
+  school: string;
+  grade: string;
+  createdAt: string;
+}
+
+export interface ParticipantSystemSettings {
+  mode: ParticipantSystemMode;
+  updatedAt?: string;
+}

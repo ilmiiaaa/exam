@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { User, KeyRound, ArrowRight, ShieldCheck, AlertCircle, Sparkles, Lock, X, Building, GraduationCap, ArrowLeft, CheckCircle2 } from 'lucide-react';
-import { collection, onSnapshot, query, where, getDoc, doc } from 'firebase/firestore';
+import { User, KeyRound, ArrowRight, ShieldCheck, AlertCircle, Sparkles, Lock, X, Building, GraduationCap, ArrowLeft, CheckCircle2, Users, RefreshCw } from 'lucide-react';
+import { collection, onSnapshot, query, where, getDoc, doc, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Exam, Submission } from '../types';
+import { Exam, Submission, ParticipantSystemMode } from '../types';
 import { SCHOOL_LIST, GRADE_LIST } from '../data/schools';
 
 interface LoginScreenProps {
@@ -19,11 +19,28 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [activeExams, setActiveExams] = useState<Exam[]>([]);
+  const [participantMode, setParticipantMode] = useState<ParticipantSystemMode>('umum');
+  const [checkingRegistered, setCheckingRegistered] = useState(false);
 
   // Teacher password modal state
   const [showTeacherModal, setShowTeacherModal] = useState(false);
   const [teacherPassword, setTeacherPassword] = useState('');
   const [teacherAuthError, setTeacherAuthError] = useState('');
+
+  // Listen to participant system mode real-time from Firestore
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'participant_system'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.mode === 'terdaftar' || data.mode === 'umum') {
+          setParticipantMode(data.mode);
+        }
+      }
+    }, (err) => {
+      console.warn("Participant system settings sync note:", err);
+    });
+    return () => unsub();
+  }, []);
 
   // Listen to active tokens real-time from Firestore for validation
   useEffect(() => {
@@ -42,7 +59,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
   }, []);
 
   // Step 1: Validate identity and go to Step 2
-  const handleNextToToken = (e: React.FormEvent) => {
+  const handleNextToToken = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -60,6 +77,59 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
     if (!gradeName) {
       setErrorMsg('Harap pilih Kelas Anda.');
       return;
+    }
+
+    // Jika sistem peserta terdaftar aktif, cek kecocokan Nama, Sekolah, dan Kelas
+    if (participantMode === 'terdaftar') {
+      setCheckingRegistered(true);
+      try {
+        let isFound = false;
+
+        // 1. Coba pencarian langsung melalui query Firestore
+        try {
+          const qStudents = query(
+            collection(db, 'registered_students'),
+            where('school', '==', schoolName),
+            where('grade', '==', gradeName)
+          );
+          const querySnap = await getDocs(qStudents);
+          isFound = querySnap.docs.some(docSnap => {
+            const regName = (docSnap.data().name || '').trim().toUpperCase();
+            return regName === cleanName;
+          });
+        } catch (queryErr) {
+          console.warn('Compound query fallback notice:', queryErr);
+        }
+
+        // 2. Fallback pencarian seluruh dokumen terdaftar dengan perbandingan case-insensitive & trimmed
+        if (!isFound) {
+          const allSnap = await getDocs(collection(db, 'registered_students'));
+          isFound = allSnap.docs.some(docSnap => {
+            const d = docSnap.data();
+            const regName = (d.name || '').trim().toUpperCase();
+            const regSchool = (d.school || '').trim().toUpperCase();
+            const regGrade = (d.grade || '').trim().toUpperCase();
+            return (
+              regName === cleanName &&
+              regSchool === schoolName.trim().toUpperCase() &&
+              regGrade === gradeName.trim().toUpperCase()
+            );
+          });
+        }
+
+        if (!isFound) {
+          setErrorMsg('Data tidak sesuai! Nama Lengkap, Asal Sekolah, atau Kelas Anda belum terdaftar dalam sistem peserta ujian. Harap periksa kembali penulisan atau hubungi pengawas ujian.');
+          setCheckingRegistered(false);
+          return;
+        }
+      } catch (err) {
+        console.error('Error verifying registered student:', err);
+        setErrorMsg('Gagal memverifikasi data peserta. Periksa koneksi internet Anda dan coba lagi.');
+        setCheckingRegistered(false);
+        return;
+      } finally {
+        setCheckingRegistered(false);
+      }
     }
 
     setStep(2);
@@ -216,6 +286,23 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
           {step === 1 ? (
             /* STEP 1: IDENTITY DETAILS */
             <form onSubmit={handleNextToToken} className="space-y-4">
+              {/* Active Mode Information Badge */}
+              {participantMode === 'terdaftar' ? (
+                <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center space-x-2.5 shadow-xs">
+                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+                  <div className="leading-tight">
+                    <span className="font-black text-amber-950">Mode Peserta Terdaftar:</span> Pastikan Nama, Asal Sekolah, dan Kelas sesuai dengan data pendaftaran ujian.
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded-2xl bg-indigo-50/80 border border-indigo-100 text-indigo-900 text-xs flex items-center space-x-2.5 shadow-xs">
+                  <Users className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <div className="leading-tight">
+                    <span className="font-black text-indigo-950">Mode Peserta Umum:</span> Silakan lengkapi nama, sekolah, dan kelas Anda untuk memulai ujian.
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label htmlFor="studentNameInput" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
                   Nama Lengkap Peserta
@@ -286,10 +373,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
 
               <button
                 type="submit"
-                className="w-full mt-3 py-3.5 px-5 btn-3d-indigo text-white text-sm font-black rounded-2xl flex items-center justify-center space-x-2 transition-all cursor-pointer"
+                disabled={checkingRegistered}
+                className="w-full mt-3 py-3.5 px-5 btn-3d-indigo text-white text-sm font-black rounded-2xl flex items-center justify-center space-x-2 transition-all cursor-pointer disabled:opacity-60"
               >
-                <span className="font-heading tracking-wide">Lanjut ke Token Ujian</span>
-                <ArrowRight className="w-4 h-4" />
+                {checkingRegistered ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Memverifikasi Data Peserta...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-heading tracking-wide">Lanjut ke Token Ujian</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
             </form>
           ) : (

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap, RotateCcw, Upload, FileSpreadsheet, FileText } from 'lucide-react';
+import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap, RotateCcw, Upload, FileSpreadsheet, FileText, UserCheck, UserPlus, Check, Filter, Info, ChevronRight, FileDown } from 'lucide-react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 import { db } from '../lib/firebase';
-import { Exam, Submission, Question } from '../types';
+import { Exam, Submission, Question, RegisteredStudent, ParticipantSystemMode } from '../types';
 import { initializeSeedExams } from '../lib/initialData';
 import { SCHOOL_LIST, GRADE_LIST } from '../data/schools';
 
@@ -12,7 +12,7 @@ interface TeacherDashboardProps {
 }
 
 export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStudentLogin }) => {
-  const [activeTab, setActiveTab] = useState<'monitor' | 'manage'>('monitor');
+  const [activeTab, setActiveTab] = useState<'monitor' | 'manage' | 'participants'>('monitor');
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -20,6 +20,32 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState<string>('ALL');
   const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>('ALL');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<'ALL' | 'completed' | 'in_progress'>('ALL');
+
+  // Participant System Mode & Registered Students State
+  const [participantMode, setParticipantMode] = useState<ParticipantSystemMode>('umum');
+  const [isUpdatingMode, setIsUpdatingMode] = useState(false);
+  const [modeSaveMsg, setModeSaveMsg] = useState('');
+
+  const [registeredStudents, setRegisteredStudents] = useState<RegisteredStudent[]>([]);
+  const [regSearchQuery, setRegSearchQuery] = useState('');
+  const [regSchoolFilter, setRegSchoolFilter] = useState<string>('ALL');
+  const [regGradeFilter, setRegGradeFilter] = useState<string>('ALL');
+
+  // Manual single student entry form
+  const [newRegName, setNewRegName] = useState('');
+  const [newRegSchool, setNewRegSchool] = useState<string>(SCHOOL_LIST[0]);
+  const [newRegGrade, setNewRegGrade] = useState<string>(GRADE_LIST[3]);
+  const [regFormError, setRegFormError] = useState('');
+  const [regFormSuccess, setRegFormSuccess] = useState('');
+  const [isSavingReg, setIsSavingReg] = useState(false);
+
+  // Excel Import & Export State
+  const [isImporting, setIsImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState<{ total: number; added: number; skipped: number } | null>(null);
+
+  // Reset Registered Students Confirmation Modal
+  const [showResetRegConfirm, setShowResetRegConfirm] = useState(false);
+  const [isResettingReg, setIsResettingReg] = useState(false);
 
   // Form State for Exam Creation / Editing
   const [editingExamId, setEditingExamId] = useState<string | null>(null);
@@ -105,6 +131,360 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
     return () => unsubExams();
   }, []);
+
+  // 3. Subscribe Real-time Participant System Mode Settings
+  useEffect(() => {
+    const unsubMode = onSnapshot(doc(db, 'settings', 'participant_system'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.mode === 'terdaftar' || data.mode === 'umum') {
+          setParticipantMode(data.mode);
+        }
+      }
+    }, (err) => {
+      console.warn('Real-time participant mode listener note:', err);
+    });
+
+    return () => unsubMode();
+  }, []);
+
+  // 4. Subscribe Real-time Registered Students
+  useEffect(() => {
+    const unsubStudents = onSnapshot(collection(db, 'registered_students'), (snap) => {
+      const list: RegisteredStudent[] = [];
+      snap.forEach((docSnap) => {
+        list.push({ id: docSnap.id, ...docSnap.data() } as RegisteredStudent);
+      });
+      // Sort alphabetically by name
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      setRegisteredStudents(list);
+    }, (err) => {
+      console.error('Real-time registered students sync error:', err);
+    });
+
+    return () => unsubStudents();
+  }, []);
+
+  // Update Participant System Mode in Firestore
+  const handleSetParticipantMode = async (mode: ParticipantSystemMode) => {
+    setIsUpdatingMode(true);
+    setModeSaveMsg('');
+    try {
+      await setDoc(doc(db, 'settings', 'participant_system'), {
+        mode,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      setParticipantMode(mode);
+      setModeSaveMsg(`Sistem pendaftaran berhasil dialihkan ke: ${mode === 'umum' ? 'Peserta Umum' : 'Peserta Terdaftar'}`);
+      setTimeout(() => setModeSaveMsg(''), 4000);
+    } catch (err) {
+      console.error('Error updating participant mode:', err);
+      alert('Gagal mengubah mode sistem peserta: ' + (err as Error).message);
+    } finally {
+      setIsUpdatingMode(false);
+    }
+  };
+
+  // Add Single Registered Student manually
+  const handleAddSingleStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegFormError('');
+    setRegFormSuccess('');
+
+    const cleanName = newRegName.trim().toUpperCase();
+    if (!cleanName) {
+      setRegFormError('Nama lengkap peserta wajib diisi.');
+      return;
+    }
+    if (!newRegSchool) {
+      setRegFormError('Asal sekolah wajib dipilih.');
+      return;
+    }
+    if (!newRegGrade) {
+      setRegFormError('Kelas wajib dipilih.');
+      return;
+    }
+
+    // Check duplicate in same school and grade
+    const exists = registeredStudents.some(
+      (s) => (s.name || '').trim().toUpperCase() === cleanName && s.school === newRegSchool && s.grade === newRegGrade
+    );
+    if (exists) {
+      setRegFormError(`Peserta "${cleanName}" di ${newRegSchool} (${newRegGrade}) sudah terdaftar.`);
+      return;
+    }
+
+    setIsSavingReg(true);
+    try {
+      const docId = `reg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      await setDoc(doc(db, 'registered_students', docId), {
+        name: cleanName,
+        school: newRegSchool,
+        grade: newRegGrade,
+        createdAt: new Date().toISOString()
+      });
+      setRegFormSuccess(`Peserta "${cleanName}" berhasil didaftarkan!`);
+      setNewRegName('');
+      setTimeout(() => setRegFormSuccess(''), 3500);
+    } catch (err) {
+      console.error('Error adding registered student:', err);
+      setRegFormError('Gagal menambahkan peserta: ' + (err as Error).message);
+    } finally {
+      setIsSavingReg(false);
+    }
+  };
+
+  // Delete Single Registered Student
+  const handleDeleteRegisteredStudent = async (id: string, name: string) => {
+    if (!window.confirm(`Hapus peserta "${name}" dari daftar peserta terdaftar?`)) return;
+    try {
+      await deleteDoc(doc(db, 'registered_students', id));
+    } catch (err) {
+      console.error('Error deleting student:', err);
+      alert('Gagal menghapus data peserta: ' + (err as Error).message);
+    }
+  };
+
+  // Clear/Reset All Registered Students
+  const handleResetRegisteredStudents = async () => {
+    if (registeredStudents.length === 0) {
+      alert('Tidak ada data peserta terdaftar untuk dihapus.');
+      return;
+    }
+    setIsResettingReg(true);
+    try {
+      const deletePromises = registeredStudents.map((s) => deleteDoc(doc(db, 'registered_students', s.id)));
+      await Promise.all(deletePromises);
+      setShowResetRegConfirm(false);
+      alert('Seluruh data peserta terdaftar berhasil dihapus.');
+    } catch (err) {
+      console.error('Error resetting registered students:', err);
+      alert('Gagal menghapus data peserta: ' + (err as Error).message);
+    } finally {
+      setIsResettingReg(false);
+    }
+  };
+
+  // Download Excel Template for Registered Students
+  const handleDownloadStudentTemplate = () => {
+    // Sheet 1: Template data with examples
+    const templateData = [
+      {
+        NO: 1,
+        NAMA_LENGKAP: 'BUDI SANTOSO',
+        ASAL_SEKOLAH: 'SD NEGERI KEDUNGGALAR 1',
+        KELAS: 'Kelas 6',
+      },
+      {
+        NO: 2,
+        NAMA_LENGKAP: 'SITI AISYAH',
+        ASAL_SEKOLAH: 'SD NEGERI PELANG LOR 1',
+        KELAS: 'Kelas 6',
+      },
+      {
+        NO: 3,
+        NAMA_LENGKAP: 'AHMAD FAUZI',
+        ASAL_SEKOLAH: 'SD NEGERI GEMARANG 1',
+        KELAS: 'Kelas 5',
+      },
+      {
+        NO: 4,
+        NAMA_LENGKAP: 'DEWI LESTARI',
+        ASAL_SEKOLAH: 'SD MUHAMMADIYAH 1 KEDUNGGALAR',
+        KELAS: 'Kelas 4',
+      },
+      {
+        NO: 5,
+        NAMA_LENGKAP: 'RIZKY PRATAMA',
+        ASAL_SEKOLAH: 'SD AL AZHAR',
+        KELAS: 'Kelas 3',
+      },
+    ];
+
+    const wsTemplate = XLSX.utils.json_to_sheet(templateData);
+    wsTemplate['!cols'] = [
+      { wch: 6 },
+      { wch: 32 },
+      { wch: 38 },
+      { wch: 15 },
+    ];
+
+    // Sheet 2: Reference list of valid schools and grades
+    const maxLen = Math.max(SCHOOL_LIST.length, GRADE_LIST.length);
+    const referenceData = [];
+    for (let i = 0; i < maxLen; i++) {
+      referenceData.push({
+        DAFTAR_SEKOLAH_VALID: SCHOOL_LIST[i] || '',
+        DAFTAR_KELAS_VALID: GRADE_LIST[i] || '',
+      });
+    }
+    const wsRef = XLSX.utils.json_to_sheet(referenceData);
+    wsRef['!cols'] = [
+      { wch: 40 },
+      { wch: 20 },
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsTemplate, 'TEMPLATE_PESERTA');
+    XLSX.utils.book_append_sheet(wb, wsRef, 'PANDUAN_SEKOLAH_DAN_KELAS');
+
+    XLSX.writeFile(wb, 'Template_Peserta_Ujian_Terdaftar.xlsx');
+  };
+
+  // Upload & Import Excel / CSV for Registered Students
+  const handleStudentFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setImportSummary(null);
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const firstSheetName = wb.SheetNames[0];
+        const ws = wb.Sheets[firstSheetName];
+        const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
+
+        if (!rawRows || rawRows.length === 0) {
+          alert('File Excel kosong atau tidak memiliki baris data.');
+          setIsImporting(false);
+          return;
+        }
+
+        let addedCount = 0;
+        let skippedCount = 0;
+
+        // Set of existing students (NAME|SCHOOL|GRADE)
+        const existingSet = new Set(
+          registeredStudents.map((s) => `${(s.name || '').trim().toUpperCase()}|${(s.school || '').trim().toUpperCase()}|${(s.grade || '').trim().toUpperCase()}`)
+        );
+
+        const newStudentsToSave: { id: string; name: string; school: string; grade: string; createdAt: string }[] = [];
+
+        for (let i = 0; i < rawRows.length; i++) {
+          const row = rawRows[i];
+          let rawName = '';
+          let rawSchool = '';
+          let rawGrade = '';
+
+          for (const key of Object.keys(row)) {
+            const k = key.trim().toUpperCase();
+            if (k.includes('NAMA') || k.includes('NAME') || k.includes('SISWA') || k.includes('PESERTA')) {
+              rawName = String(row[key]);
+            } else if (k.includes('SEKOLAH') || k.includes('SCHOOL') || k.includes('ASAL')) {
+              rawSchool = String(row[key]);
+            } else if (k.includes('KELAS') || k.includes('GRADE')) {
+              rawGrade = String(row[key]);
+            }
+          }
+
+          const cleanName = (rawName || '').trim().toUpperCase();
+          if (!cleanName) {
+            skippedCount++;
+            continue;
+          }
+
+          // Match school against SCHOOL_LIST
+          const trimmedSchool = (rawSchool || '').trim();
+          let matchedSchool = SCHOOL_LIST.find((s) => s.toUpperCase() === trimmedSchool.toUpperCase()) || trimmedSchool;
+          if (!matchedSchool) {
+            matchedSchool = SCHOOL_LIST[0];
+          }
+
+          // Match grade against GRADE_LIST
+          const trimmedGrade = (rawGrade || '').trim();
+          let matchedGrade = GRADE_LIST.find((g) => g.toUpperCase() === trimmedGrade.toUpperCase()) || '';
+          if (!matchedGrade) {
+            const num = trimmedGrade.replace(/\D/g, '');
+            if (num) {
+              const byNum = GRADE_LIST.find((g) => g.includes(num));
+              if (byNum) matchedGrade = byNum;
+            }
+          }
+          if (!matchedGrade) {
+            matchedGrade = GRADE_LIST[3]; // default Kelas 6
+          }
+
+          const key = `${cleanName}|${matchedSchool.toUpperCase()}|${matchedGrade.toUpperCase()}`;
+          if (existingSet.has(key)) {
+            skippedCount++;
+            continue;
+          }
+
+          existingSet.add(key);
+          const docId = `reg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${i}`;
+          newStudentsToSave.push({
+            id: docId,
+            name: cleanName,
+            school: matchedSchool,
+            grade: matchedGrade,
+            createdAt: new Date().toISOString()
+          });
+          addedCount++;
+        }
+
+        if (newStudentsToSave.length > 0) {
+          const savePromises = newStudentsToSave.map((st) =>
+            setDoc(doc(db, 'registered_students', st.id), st)
+          );
+          await Promise.all(savePromises);
+        }
+
+        setImportSummary({
+          total: rawRows.length,
+          added: addedCount,
+          skipped: skippedCount,
+        });
+
+        e.target.value = '';
+      } catch (err) {
+        console.error('Error importing Excel file:', err);
+        alert('Gagal mengimpor file Excel: ' + (err as Error).message);
+      } finally {
+        setIsImporting(false);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  // Export Registered Students to Excel
+  const handleExportRegisteredStudents = () => {
+    if (registeredStudents.length === 0) {
+      alert('Belum ada data peserta terdaftar untuk diekspor.');
+      return;
+    }
+
+    const exportData = registeredStudents.map((st, idx) => ({
+      NO: idx + 1,
+      NAMA_LENGKAP: st.name,
+      ASAL_SEKOLAH: st.school,
+      KELAS: st.grade,
+      TANGGAL_DIDAFTARKAN: st.createdAt ? new Date(st.createdAt).toLocaleString('id-ID') : '-'
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    ws['!cols'] = [
+      { wch: 6 },
+      { wch: 32 },
+      { wch: 38 },
+      { wch: 15 },
+      { wch: 24 }
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'DATA_PESERTA_TERDAFTAR');
+    XLSX.writeFile(wb, `Data_Peserta_Terdaftar_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // Filtered Registered Students for Table Display
+  const filteredRegisteredStudents = registeredStudents.filter((st) => {
+    const matchesSearch = regSearchQuery === '' || (st.name || '').toUpperCase().includes(regSearchQuery.trim().toUpperCase());
+    const matchesSchool = regSchoolFilter === 'ALL' || st.school === regSchoolFilter;
+    const matchesGrade = regGradeFilter === 'ALL' || st.grade === regGradeFilter;
+    return matchesSearch && matchesSchool && matchesGrade;
+  });
 
   // Add question field in form
   const handleAddQuestion = () => {
@@ -612,10 +992,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
       {/* Main Dashboard Layout */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
         {/* Navigation Tabs */}
-        <div className="flex items-center space-x-3 border-b border-indigo-200/60 pb-2">
+        <div className="flex flex-wrap items-center gap-2 border-b border-indigo-200/60 pb-3">
           <button
             onClick={() => setActiveTab('monitor')}
-            className={`px-5 py-2.5 rounded-2xl font-black text-xs flex items-center space-x-2 transition-all cursor-pointer ${
+            className={`px-4 sm:px-5 py-2.5 rounded-2xl font-black text-xs flex items-center space-x-2 transition-all cursor-pointer ${
               activeTab === 'monitor'
                 ? 'btn-3d-indigo text-white'
                 : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 shadow-xs'
@@ -627,7 +1007,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
 
           <button
             onClick={() => setActiveTab('manage')}
-            className={`px-5 py-2.5 rounded-2xl font-black text-xs flex items-center space-x-2 transition-all cursor-pointer ${
+            className={`px-4 sm:px-5 py-2.5 rounded-2xl font-black text-xs flex items-center space-x-2 transition-all cursor-pointer ${
               activeTab === 'manage'
                 ? 'btn-3d-violet text-white'
                 : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 shadow-xs'
@@ -635,6 +1015,25 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
           >
             <KeyRound className="w-4 h-4 text-purple-500" />
             <span>Kelola Token & Soal Ujian ({exams.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('participants')}
+            className={`px-4 sm:px-5 py-2.5 rounded-2xl font-black text-xs flex items-center space-x-2 transition-all cursor-pointer ${
+              activeTab === 'participants'
+                ? 'btn-3d-emerald text-white'
+                : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 shadow-xs'
+            }`}
+          >
+            <UserCheck className="w-4 h-4 text-emerald-500" />
+            <span>Pengaturan Sistem Peserta Ujian ({registeredStudents.length})</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+              participantMode === 'terdaftar'
+                ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+            }`}>
+              {participantMode === 'terdaftar' ? 'Mode Terdaftar' : 'Mode Umum'}
+            </span>
           </button>
         </div>
 
@@ -1303,6 +1702,509 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
             </div>
           </div>
         )}
+
+        {/* TAB 3: PENGATURAN SISTEM PESERTA UJIAN */}
+        {activeTab === 'participants' && (
+          <div className="space-y-6">
+            {/* Header & Status Notice */}
+            <div className="card-3d p-5 md:p-6 bg-white border-2 border-slate-200">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <span className="p-2 rounded-xl bg-emerald-100 text-emerald-800">
+                      <UserCheck className="w-5 h-5" />
+                    </span>
+                    <h2 className="text-lg md:text-xl font-black text-slate-900 font-heading">
+                      Pengaturan Sistem Peserta Ujian
+                    </h2>
+                  </div>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Atur sistem validasi masuk peserta (Umum vs Terdaftar) dan kelola basis data siswa yang berhak mengikuti ujian.
+                  </p>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs font-bold text-slate-600">Mode Sistem Saat Ini:</span>
+                  <span className={`px-3 py-1 rounded-xl text-xs font-black shadow-xs ${
+                    participantMode === 'terdaftar'
+                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                      : 'bg-indigo-100 text-indigo-900 border border-indigo-300'
+                  }`}>
+                    {participantMode === 'terdaftar' ? '🛡️ SISTEM PESERTA TERDAFTAR' : '🌐 SISTEM PESERTA UMUM'}
+                  </span>
+                </div>
+              </div>
+
+              {modeSaveMsg && (
+                <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center space-x-2 animate-fadeIn">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{modeSaveMsg}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Selection of 2 Systems: Peserta Umum vs Peserta Terdaftar */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {/* Card 1: Sistem Peserta Umum */}
+              <div className={`card-3d p-5 md:p-6 rounded-3xl transition-all border-2 relative flex flex-col justify-between ${
+                participantMode === 'umum'
+                  ? 'border-indigo-500 ring-4 ring-indigo-500/10 bg-indigo-50/20'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shadow-xs">
+                      <Users className="w-6 h-6" />
+                    </div>
+                    {participantMode === 'umum' ? (
+                      <span className="px-3 py-1 rounded-full text-[11px] font-black bg-indigo-600 text-white shadow-xs flex items-center space-x-1">
+                        <Check className="w-3.5 h-3.5" />
+                        <span>SEDANG AKTIF</span>
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500">
+                        Tidak Aktif
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 font-heading">
+                      1. Sistem Peserta Umum (Terbuka)
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">
+                      Siswa bebas mengisi <strong>Nama Lengkap</strong>, memilih <strong>Asal Sekolah</strong>, dan <strong>Kelas</strong> secara mandiri langsung di halaman masuk tanpa perlu didaftarkan terlebih dahulu oleh guru.
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-2xl text-[11px] text-slate-600 space-y-1.5 border border-slate-100">
+                    <p className="font-extrabold text-slate-800">Karakteristik Mode Umum:</p>
+                    <ul className="list-disc list-inside space-y-1 text-slate-600">
+                      <li>Siswa langsung mengisi data diri dan lanjut ke token ujian.</li>
+                      <li>Tidak ada pengecekan nama di database sebelum mengerjakan.</li>
+                      <li>Cocok untuk simulasi terbuka, latihan mandiri, atau try out akbar.</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-2">
+                  <button
+                    type="button"
+                    disabled={participantMode === 'umum' || isUpdatingMode}
+                    onClick={() => handleSetParticipantMode('umum')}
+                    className={`w-full py-3 px-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center space-x-2 cursor-pointer ${
+                      participantMode === 'umum'
+                        ? 'bg-indigo-100 text-indigo-700 font-black cursor-default'
+                        : 'btn-3d-indigo text-white hover:opacity-95'
+                    }`}
+                  >
+                    {participantMode === 'umum' ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>Mode Umum Sedang Digunakan</span>
+                      </>
+                    ) : (
+                      <span>Gunakan Sistem Peserta Umum</span>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Card 2: Sistem Peserta Terdaftar */}
+              <div className={`card-3d p-5 md:p-6 rounded-3xl transition-all border-2 relative flex flex-col justify-between ${
+                participantMode === 'terdaftar'
+                  ? 'border-amber-500 ring-4 ring-amber-500/10 bg-amber-50/20'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center shadow-xs">
+                      <UserCheck className="w-6 h-6" />
+                    </div>
+                    {participantMode === 'terdaftar' ? (
+                      <span className="px-3 py-1 rounded-full text-[11px] font-black bg-amber-600 text-white shadow-xs flex items-center space-x-1">
+                        <Check className="w-3.5 h-3.5" />
+                        <span>SEDANG AKTIF</span>
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500">
+                        Tidak Aktif
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 font-heading">
+                      2. Sistem Peserta Terdaftar (Wajib Verifikasi)
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">
+                      Admin/Guru mengisi <strong>Nama Lengkap</strong>, <strong>Asal Sekolah</strong>, dan <strong>Kelas</strong> terlebih dahulu di sistem. Siswa hanya dapat lanjut ke token ujian jika data yang diinput cocok persis dengan data pendaftaran.
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-amber-50/80 rounded-2xl text-[11px] text-amber-900 space-y-1.5 border border-amber-200/70">
+                    <p className="font-extrabold text-amber-950">Karakteristik Mode Terdaftar:</p>
+                    <ul className="list-disc list-inside space-y-1 text-amber-900">
+                      <li>Siswa di halaman login diverifikasi ketat (Nama, Sekolah, dan Kelas).</li>
+                      <li>Jika data tidak sesuai, siswa <strong>TIDAK BISA lanjut</strong> ke token ujian.</li>
+                      <li>Sistem menampilkan peringatan: <em>"Data tidak sesuai!"</em></li>
+                      <li>Mencegah siswa salah input nama atau mengerjakan ujian di luar daftar resmi.</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-2">
+                  <button
+                    type="button"
+                    disabled={participantMode === 'terdaftar' || isUpdatingMode}
+                    onClick={() => handleSetParticipantMode('terdaftar')}
+                    className={`w-full py-3 px-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center space-x-2 cursor-pointer ${
+                      participantMode === 'terdaftar'
+                        ? 'bg-amber-100 text-amber-900 font-black cursor-default'
+                        : 'btn-3d-amber text-slate-950 hover:opacity-95'
+                    }`}
+                  >
+                    {participantMode === 'terdaftar' ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>Mode Terdaftar Sedang Digunakan</span>
+                      </>
+                    ) : (
+                      <span>Gunakan Sistem Peserta Terdaftar</span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Actions Panel: Template, Upload/Import, Export, Reset */}
+            <div className="card-3d p-5 md:p-6 bg-white border-2 border-slate-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
+                <div>
+                  <h3 className="text-base font-black text-slate-900 font-heading flex items-center space-x-2">
+                    <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                    <span>Kelola & Integrasi Data Peserta (Excel/Spreadsheet)</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Unduh format template resmi, impor ratusan siswa sekaligus, atau ekspor data peserta terdaftar.
+                  </p>
+                </div>
+
+                <span className="text-xs font-black px-3 py-1 rounded-xl bg-slate-100 text-slate-700">
+                  Total Terdaftar: <strong>{registeredStudents.length} Siswa</strong>
+                </span>
+              </div>
+
+              {/* Action Buttons Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {/* 1. Download Template */}
+                <button
+                  type="button"
+                  onClick={handleDownloadStudentTemplate}
+                  className="py-3 px-4 rounded-2xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-2 border-emerald-300 font-black text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-xs"
+                >
+                  <Download className="w-4 h-4 text-emerald-700" />
+                  <span>Unduh Template Excel</span>
+                </button>
+
+                {/* 2. Upload / Import Excel */}
+                <label className="py-3 px-4 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border-2 border-indigo-300 font-black text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-xs">
+                  <Upload className="w-4 h-4 text-indigo-700" />
+                  <span>{isImporting ? 'Mengimpor...' : 'Unggah Data Excel'}</span>
+                  <input
+                    type="file"
+                    accept=".xlsx, .xls, .csv"
+                    disabled={isImporting}
+                    onChange={handleStudentFileUpload}
+                    className="hidden"
+                  />
+                </label>
+
+                {/* 3. Export Data */}
+                <button
+                  type="button"
+                  onClick={handleExportRegisteredStudents}
+                  disabled={registeredStudents.length === 0}
+                  className="py-3 px-4 rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-800 border-2 border-slate-300 font-black text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                >
+                  <FileDown className="w-4 h-4 text-slate-600" />
+                  <span>Ekspor Data (.xlsx)</span>
+                </button>
+
+                {/* 4. Delete / Reset All Registered Students */}
+                <button
+                  type="button"
+                  onClick={() => setShowResetRegConfirm(true)}
+                  disabled={registeredStudents.length === 0}
+                  className="py-3 px-4 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-800 border-2 border-rose-300 font-black text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-600" />
+                  <span>Hapus Semua Peserta</span>
+                </button>
+              </div>
+
+              {/* Import Feedback Summary */}
+              {importSummary && (
+                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs space-y-1 animate-fadeIn">
+                  <div className="flex items-center space-x-2 font-black text-emerald-900">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Laporan Hasil Impor File Excel:</span>
+                  </div>
+                  <p>
+                    Total baris dibaca: <strong>{importSummary.total}</strong> | Berhasil ditambahkan: <strong className="text-emerald-700">{importSummary.added}</strong> | Dilewati (duplikat/nama kosong): <strong>{importSummary.skipped}</strong>
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Manual Single Student Registration Form */}
+            <div className="card-3d p-5 md:p-6 bg-white border-2 border-slate-200">
+              <div className="pb-3 border-b border-slate-100 mb-4">
+                <h3 className="text-base font-black text-slate-900 font-heading flex items-center space-x-2">
+                  <UserPlus className="w-5 h-5 text-indigo-600" />
+                  <span>Tambah Peserta Terdaftar Manual</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  Daftarkan satu peserta secara manual berdasarkan daftar sekolah dan kelas resmi di sistem.
+                </p>
+              </div>
+
+              {regFormError && (
+                <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                  <span>{regFormError}</span>
+                </div>
+              )}
+
+              {regFormSuccess && (
+                <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{regFormSuccess}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleAddSingleStudent} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                <div className="md:col-span-2 space-y-1">
+                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
+                    Nama Lengkap Peserta
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="CONTOH: AHMAD FAUZI"
+                    value={newRegName}
+                    onChange={(e) => setNewRegName(e.target.value.toUpperCase())}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-bold uppercase tracking-wide focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
+                    Asal Sekolah
+                  </label>
+                  <select
+                    value={newRegSchool}
+                    onChange={(e) => setNewRegSchool(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    {SCHOOL_LIST.map((sch) => (
+                      <option key={sch} value={sch}>
+                        {sch}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
+                    Kelas
+                  </label>
+                  <select
+                    value={newRegGrade}
+                    onChange={(e) => setNewRegGrade(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    {GRADE_LIST.map((grd) => (
+                      <option key={grd} value={grd}>
+                        {grd}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="md:col-span-4 flex justify-end pt-1">
+                  <button
+                    type="submit"
+                    disabled={isSavingReg}
+                    className="py-2.5 px-6 btn-3d-indigo text-white text-xs font-black rounded-xl flex items-center space-x-2 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingReg ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Mendaftarkan...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="w-4 h-4" />
+                        <span>Daftarkan Peserta Ini</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Registered Students Data Table & Filters */}
+            <div className="card-3d p-5 md:p-6 bg-white border-2 border-slate-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
+                <div>
+                  <h3 className="text-base font-black text-slate-900 font-heading flex items-center space-x-2">
+                    <Users className="w-5 h-5 text-indigo-600" />
+                    <span>Daftar Peserta Terdaftar di Sistem</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Daftar siswa resmi yang diizinkan melanjutkan ke token ujian saat mode terdaftar aktif.
+                  </p>
+                </div>
+
+                <span className="text-xs font-extrabold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-xl border border-indigo-200">
+                  Menampilkan {filteredRegisteredStudents.length} dari {registeredStudents.length} siswa
+                </span>
+              </div>
+
+              {/* Filter and Search Bar */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Search by Name */}
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Cari nama peserta..."
+                    value={regSearchQuery}
+                    onChange={(e) => setRegSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500"
+                  />
+                  {regSearchQuery && (
+                    <button
+                      onClick={() => setRegSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Filter by School */}
+                <div>
+                  <select
+                    value={regSchoolFilter}
+                    onChange={(e) => setRegSchoolFilter(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option value="ALL">Semua Sekolah ({SCHOOL_LIST.length})</option>
+                    {SCHOOL_LIST.map((sch) => (
+                      <option key={sch} value={sch}>
+                        {sch}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Filter by Grade */}
+                <div>
+                  <select
+                    value={regGradeFilter}
+                    onChange={(e) => setRegGradeFilter(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option value="ALL">Semua Kelas</option>
+                    {GRADE_LIST.map((grd) => (
+                      <option key={grd} value={grd}>
+                        {grd}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Table */}
+              {registeredStudents.length === 0 ? (
+                <div className="text-center py-12 px-4 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 space-y-3">
+                  <div className="w-14 h-14 rounded-full bg-slate-200 text-slate-400 flex items-center justify-center mx-auto">
+                    <Users className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-700">Belum Ada Peserta Terdaftar</h4>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                      Unduh template Excel untuk mendaftarkan peserta secara massal atau gunakan formulir di atas untuk mendaftarkan siswa secara manual.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDownloadStudentTemplate}
+                    className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-all shadow-xs cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Unduh Template Excel Sekarang</span>
+                  </button>
+                </div>
+              ) : filteredRegisteredStudents.length === 0 ? (
+                <div className="text-center py-8 px-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-500">
+                  Tidak ditemukan peserta yang sesuai dengan filter pencarian Anda.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-2xl border-2 border-slate-200">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-100/90 text-slate-700 text-[11px] font-black uppercase tracking-wider border-b border-slate-200">
+                        <th className="py-3 px-3 text-center w-12">No</th>
+                        <th className="py-3 px-4">Nama Lengkap Siswa</th>
+                        <th className="py-3 px-4">Asal Sekolah</th>
+                        <th className="py-3 px-3 text-center">Kelas</th>
+                        <th className="py-3 px-3 text-center">Waktu Didaftarkan</th>
+                        <th className="py-3 px-3 text-center w-20">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-xs">
+                      {filteredRegisteredStudents.map((st, idx) => (
+                        <tr key={st.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-2.5 px-3 text-center font-bold text-slate-500">
+                            {idx + 1}
+                          </td>
+                          <td className="py-2.5 px-4 font-black text-slate-900 tracking-wide uppercase">
+                            {st.name}
+                          </td>
+                          <td className="py-2.5 px-4 font-semibold text-slate-700 flex items-center space-x-1.5">
+                            <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span>{st.school}</span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              {st.grade}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center text-slate-400 text-[11px] font-semibold">
+                            {st.createdAt ? new Date(st.createdAt).toLocaleDateString('id-ID') : '-'}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRegisteredStudent(st.id, st.name)}
+                              title="Hapus peserta ini"
+                              className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Edit Student Submission Modal */}
@@ -1492,6 +2394,66 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                   <>
                     <Trash2 className="w-4 h-4" />
                     <span>Ya, Hapus Semua Data</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Registered Students Confirmation Modal */}
+      {showResetRegConfirm && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full border-2 border-slate-200 shadow-2xl space-y-5 animate-fadeIn">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900 font-heading">
+                  Konfirmasi Hapus Peserta
+                </h3>
+                <p className="text-xs font-semibold text-slate-500">
+                  Hapus Seluruh Data Peserta Terdaftar
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs font-semibold text-rose-900 space-y-1.5">
+              <p className="font-bold text-rose-950">⚠️ Peringatan Penting:</p>
+              <p>
+                Tindakan ini akan menghapus permanen seluruh <strong>{registeredStudents.length} data peserta terdaftar</strong> di database Cloud Firestore.
+              </p>
+              <p className="text-rose-700">
+                Data yang sudah dihapus tidak dapat dipulihkan. Siswa tidak akan dapat masuk jika Sistem Peserta Terdaftar sedang aktif sampai Anda mendaftarkan data kembali.
+              </p>
+            </div>
+
+            <div className="flex items-center space-x-3 pt-2">
+              <button
+                type="button"
+                disabled={isResettingReg}
+                onClick={() => setShowResetRegConfirm(false)}
+                className="flex-1 py-3 rounded-2xl border-2 border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isResettingReg}
+                onClick={handleResetRegisteredStudents}
+                className="flex-1 py-3 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black flex items-center justify-center space-x-1.5 transition-all shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {isResettingReg ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Menghapus...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Ya, Hapus Semua Peserta</span>
                   </>
                 )}
               </button>
