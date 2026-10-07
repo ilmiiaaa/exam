@@ -38,8 +38,26 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
   ).current;
 
   // Randomize questions uniquely and deterministically for this student
-  const shuffledQuestions = useRef<Question[]>(
+  const rawShuffledQuestions = useRef<Question[]>(
     getShuffledQuestionsForStudent(exam.questions, studentName, examToken)
+  ).current;
+
+  // Private map of correct answers used strictly for grading evaluation calculation ONLY
+  const correctAnswersMapRef = useRef<Record<string, number>>(
+    rawShuffledQuestions.reduce((acc, q) => {
+      acc[q.id] = q.correctAnswer;
+      return acc;
+    }, {} as Record<string, number>)
+  );
+
+  // Sanitized questions exposed to student UI - strictly stripped of any answer keys or explanations
+  const shuffledQuestions = useRef<Omit<Question, 'correctAnswer' | 'explanation'>[]>(
+    rawShuffledQuestions.map(q => ({
+      id: q.id,
+      question: q.question,
+      options: q.options,
+      points: q.points,
+    }))
   ).current;
 
   const totalDurationSeconds = Math.max(60, (Number(exam.durationMinutes) || 15) * 60);
@@ -154,7 +172,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     shuffledQuestions.forEach((q) => {
       const points = q.points || 20;
       maxPoints += points;
-      if (currentAnswers[q.id] === q.correctAnswer) {
+      if (currentAnswers[q.id] === correctAnswersMapRef.current[q.id]) {
         earnedScore += points;
       }
     });
@@ -400,7 +418,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       <main className="flex-1 max-w-5xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Current Question Card */}
         <div className="lg:col-span-8 flex flex-col space-y-4">
-          <div className="card-3d p-5 md:p-7 flex-1 flex flex-col justify-between">
+          <div key={currentQ?.id} className="card-3d p-5 md:p-7 flex-1 flex flex-col justify-between">
             <div>
               {/* Question Header */}
               <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
@@ -428,10 +446,10 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
 
                   return (
                     <button
-                      key={oIdx}
+                      key={`${currentQ.id}_opt_${oIdx}`}
                       type="button"
                       onClick={() => handleSelectOption(currentQ.id, oIdx)}
-                      className={`w-full text-left p-4 rounded-2xl border-2 transition-all flex items-center justify-between group cursor-pointer ${
+                      className={`w-full text-left p-4 rounded-2xl border-2 transition-[border-color,background-color,box-shadow,transform] duration-150 flex items-center justify-between group cursor-pointer ${
                         isSelected
                           ? 'border-indigo-600 bg-indigo-50/90 text-indigo-950 font-bold shadow-[0_4px_14px_rgba(79,70,229,0.15)] translate-x-1'
                           : 'border-slate-200/90 bg-slate-50 hover:bg-slate-100 text-slate-800'
@@ -699,11 +717,16 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
                     <button
                       key={num}
                       type="button"
-                      onClick={() => {
-                        setCurrentIdx(num - 1);
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (document.activeElement instanceof HTMLElement) {
+                          document.activeElement.blur();
+                        }
                         setShowUnansweredModal(false);
+                        setCurrentIdx(num - 1);
                       }}
-                      className="px-2.5 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-200 font-black text-xs transition-all cursor-pointer shadow-xs active:scale-95"
+                      className="px-2.5 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-200 font-black text-xs transition-colors cursor-pointer shadow-xs active:scale-95"
                       title={`Klik untuk langsung mengerjakan nomor ${num}`}
                     >
                       No. {num}
@@ -718,11 +741,16 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
 
             <button
               type="button"
-              onClick={() => {
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (document.activeElement instanceof HTMLElement) {
+                  document.activeElement.blur();
+                }
+                setShowUnansweredModal(false);
                 if (unansweredNumbers.length > 0) {
                   setCurrentIdx(unansweredNumbers[0] - 1);
                 }
-                setShowUnansweredModal(false);
               }}
               className="w-full py-3.5 px-4 btn-3d-indigo text-white text-xs font-black rounded-2xl shadow-md transition-all cursor-pointer flex items-center justify-center space-x-1.5"
             >
