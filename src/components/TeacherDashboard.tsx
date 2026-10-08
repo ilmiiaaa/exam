@@ -7,7 +7,7 @@ import { Exam, Submission, Question, QuestionType, RegisteredStudent, Participan
 import { initializeSeedExams } from '../lib/initialData';
 import { SCHOOL_LIST, GRADE_LIST } from '../data/schools';
 import { broadcastSystemUpdate } from '../lib/appUpdateManager';
-import { QUESTION_TYPES, downloadQuestionTemplate, parseQuestionsFromWorkbook } from '../lib/questionTemplates';
+import { QUESTION_TYPES, downloadQuestionTemplate, parseQuestionsFromWorkbook, isQuestionTypeKeyword } from '../lib/questionTemplates';
 
 interface TeacherDashboardProps {
   onBackToStudentLogin: () => void;
@@ -725,7 +725,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
         const { questions: parsedQuestions, detectedTypes, invalidCount } = parseQuestionsFromWorkbook(workbook);
 
         if (!parsedQuestions || parsedQuestions.length === 0) {
-          setCreateError('File Excel tidak memiliki data soal yang valid. Pastikan format kolom sesuai dengan templat.');
+          setCreateError(
+            `File Excel tidak memiliki data soal yang valid (0 butir terbaca). Pastikan file berisi kolom pertanyaan/soal dan tidak kosong. Anda dapat mengunduh contoh pada menu 'Unduh Template'.`
+          );
           return;
         }
 
@@ -771,7 +773,16 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
     );
     setQuestions(
       ex.questions && ex.questions.length > 0
-        ? ex.questions
+        ? ex.questions.map((q) => {
+            if (q.imageUrl && isQuestionTypeKeyword(q.imageUrl)) {
+              return {
+                ...q,
+                type: q.type === 'image_question' ? 'multiple_choice' : q.type,
+                imageUrl: undefined,
+              };
+            }
+            return q;
+          })
         : [
             {
               id: 'q_' + Date.now(),
@@ -2201,14 +2212,14 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                               <div className="flex items-center space-x-2">
                                 <input
                                   type="url"
-                                  value={q.imageUrl || ''}
+                                  value={isQuestionTypeKeyword(q.imageUrl || '') ? '' : (q.imageUrl || '')}
                                   onChange={(e) =>
                                     handleQuestionChange(qIdx, 'imageUrl', e.target.value)
                                   }
                                   placeholder="https://contoh.com/gambar-soal.png"
                                   className="flex-1 p-2 bg-white border border-pink-200 rounded-xl text-xs font-semibold focus:outline-none"
                                 />
-                                {q.imageUrl && (
+                                {q.imageUrl && !isQuestionTypeKeyword(q.imageUrl) && (
                                   <img
                                     src={q.imageUrl}
                                     alt="Preview"

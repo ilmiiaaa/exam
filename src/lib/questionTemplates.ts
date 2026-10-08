@@ -9,6 +9,49 @@ export interface QuestionTypeInfo {
   iconName: string;
 }
 
+/**
+ * Checks if a string is a question type name/keyword
+ */
+export function isQuestionTypeKeyword(val: string): boolean {
+  if (!val || typeof val !== 'string') return false;
+  const norm = val.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return [
+    'PILIHANGANDA',
+    'BENARSALAH',
+    'MENJODOHKAN',
+    'ISIANSINGKAT',
+    'BERGAMBAR',
+    'SOALBERGAMBAR',
+    'MULTIPLECHOICE',
+    'TRUEFALSE',
+    'MATCHING',
+    'SHORTANSWER',
+    'IMAGEQUESTION',
+    'PG',
+    'BS',
+    'TF',
+    'MC',
+  ].includes(norm);
+}
+
+/**
+ * Validates that an image URL is a real URL or image path,
+ * and definitely NOT a question type keyword like PILIHAN_GANDA or arbitrary text.
+ */
+export function isValidImageUrl(val: string): boolean {
+  if (!val || typeof val !== 'string') return false;
+  const trimmed = val.trim();
+  if (!trimmed || isQuestionTypeKeyword(trimmed)) return false;
+  return (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('data:image/') ||
+    trimmed.startsWith('/') ||
+    /\.(png|jpe?g|gif|webp|svg|bmp)(\?.*)?$/i.test(trimmed) ||
+    (trimmed.length > 8 && (trimmed.includes('/') || trimmed.includes('.')))
+  );
+}
+
 export const QUESTION_TYPES: QuestionTypeInfo[] = [
   {
     type: 'multiple_choice',
@@ -381,7 +424,12 @@ export function downloadQuestionTemplate(type: QuestionType | 'all') {
 
 /**
  * Universal Excel Parser for Questions:
- * Automatically identifies sheet columns and formats for all 5 question types
+ * Automatically identifies sheet columns, headers, and formats for all 5 question types:
+ * 1. Pilihan Ganda (Multiple Choice)
+ * 2. Benar / Salah (True / False)
+ * 3. Menjodohkan (Matching)
+ * 4. Isian Singkat (Short Answer)
+ * 5. Soal Bergambar (Image-based Question)
  */
 export function parseQuestionsFromWorkbook(workbook: XLSX.WorkBook): {
   questions: Question[];
@@ -394,105 +442,301 @@ export function parseQuestionsFromWorkbook(workbook: XLSX.WorkBook): {
 
   workbook.SheetNames.forEach((sheetName) => {
     const worksheet = workbook.Sheets[sheetName];
-    const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+    if (!worksheet) return;
 
-    rawRows.forEach((row, rowIdx) => {
-      // Normalize row keys to lowercase without spaces or underscores
-      const norm: Record<string, any> = {};
-      Object.keys(row).forEach((k) => {
-        const clean = k.toString().toLowerCase().replace(/[\_\s\-\/]/g, '');
-        norm[clean] = row[k];
-      });
+    // Detect header row by scanning first 15 rows of worksheet
+    const aoa: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+    if (!aoa || aoa.length === 0) return;
 
-      // 1. Detect question type from explicit column if present
-      const explicitTypeStr = (
-        norm['tipesoal'] ||
-        norm['tipe'] ||
-        norm['jenissoal'] ||
-        norm['jenis'] ||
-        norm['type'] ||
-        ''
-      ).toString().toLowerCase().trim();
-
-      let qType: QuestionType = 'multiple_choice';
+    let headerRowIdx = -1;
+    for (let r = 0; r < Math.min(aoa.length, 15); r++) {
+      const row = aoa[r];
+      if (!Array.isArray(row)) continue;
+      const rowJoined = row
+        .map((cell) => String(cell || '').toLowerCase().replace(/[^a-z0-9]/g, ''))
+        .join(' ');
 
       if (
-        explicitTypeStr.includes('benar') ||
-        explicitTypeStr.includes('salah') ||
-        explicitTypeStr === 'bs' ||
-        explicitTypeStr === 'tf' ||
-        explicitTypeStr.includes('true')
+        rowJoined.includes('soal') ||
+        rowJoined.includes('pertanyaan') ||
+        rowJoined.includes('pernyataan') ||
+        rowJoined.includes('instruksi') ||
+        rowJoined.includes('question') ||
+        rowJoined.includes('pilihan') ||
+        rowJoined.includes('opsi') ||
+        rowJoined.includes('kunci') ||
+        rowJoined.includes('premis')
       ) {
-        qType = 'true_false';
-      } else if (
-        explicitTypeStr.includes('jodoh') ||
-        explicitTypeStr.includes('match') ||
-        explicitTypeStr.includes('pasang')
-      ) {
-        qType = 'matching';
-      } else if (
-        explicitTypeStr.includes('isian') ||
-        explicitTypeStr.includes('singkat') ||
-        explicitTypeStr.includes('short') ||
-        explicitTypeStr.includes('essay')
-      ) {
-        qType = 'short_answer';
-      } else if (
-        explicitTypeStr.includes('gambar') ||
-        explicitTypeStr.includes('image')
-      ) {
-        qType = 'image_question';
-      } else {
-        // Auto-detect based on row column structure
-        const hasImageUrl = Boolean(norm['urlgambar'] || norm['gambar'] || norm['imageurl'] || norm['foto']);
-        const hasMatchingPairs = Boolean(norm['premis1'] || norm['pasangan1'] || norm['premis'] || norm['pasangan']);
-        const hasOptions = Boolean(norm['pilihana'] || norm['opsia'] || norm['a']);
-        const rawKey = (norm['kuncijawaban'] || norm['kunci'] || norm['jawaban'] || '').toString().trim().toUpperCase();
+        headerRowIdx = r;
+        break;
+      }
+    }
 
-        if (hasImageUrl) {
-          qType = 'image_question';
-        } else if (hasMatchingPairs) {
-          qType = 'matching';
-        } else if (rawKey === 'BENAR' || rawKey === 'SALAH' || rawKey === 'TRUE' || rawKey === 'FALSE') {
+    if (headerRowIdx === -1) headerRowIdx = 0;
+
+    const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIdx, defval: '' });
+
+    rawRows.forEach((row, rowIdx) => {
+      // Build clean entries for smart multi-strategy matching
+      const entries = Object.entries(row).map(([k, v]) => ({
+        originalKey: k,
+        cleanKey: k.toLowerCase().replace(/[^a-z0-9]/g, ''),
+        valStr: v !== undefined && v !== null ? String(v).trim() : '',
+        rawVal: v,
+      }));
+
+      // Skip row if completely blank
+      const hasAnyVal = entries.some((e) => e.valStr !== '');
+      if (!hasAnyVal) return;
+
+      // Helper to check if a column represents question type metadata
+      const isTypeCol = (cleanKey: string) =>
+        cleanKey.startsWith('tipesoal') ||
+        cleanKey.startsWith('jenissoal') ||
+        cleanKey.startsWith('kategorisoal') ||
+        cleanKey.startsWith('formatsoal') ||
+        cleanKey === 'tipe' ||
+        cleanKey === 'jenis' ||
+        cleanKey === 'type';
+
+      // Smart value lookup helper
+      const getVal = (...keywords: string[]): string => {
+        const validKws = keywords.filter((k) => k && k.trim().length > 0);
+        const isLookingForType = validKws.some(
+          (k) =>
+            k.includes('tipe') ||
+            k.includes('jenis') ||
+            k.includes('type')
+        );
+
+        // 1. Exact match with cleaned key
+        for (const kw of validKws) {
+          const cKw = kw.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (!cKw) continue;
+          const match = entries.find((e) => {
+            if (!isLookingForType && isTypeCol(e.cleanKey)) return false;
+            return e.cleanKey === cKw && e.valStr !== '';
+          });
+          if (match) return match.valStr;
+        }
+
+        // 2. Starts with keyword (e.g. 'premis1kiri' starts with 'premis1')
+        for (const kw of validKws) {
+          const cKw = kw.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (!cKw) continue;
+          const match = entries.find((e) => {
+            if (!isLookingForType && isTypeCol(e.cleanKey)) return false;
+            return e.cleanKey.startsWith(cKw) && e.valStr !== '';
+          });
+          if (match) return match.valStr;
+        }
+
+        // 3. Contains keyword (minimum 3 chars, and never match type columns unless querying type)
+        for (const kw of validKws) {
+          const cKw = kw.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (cKw.length >= 3) {
+            const match = entries.find((e) => {
+              if (!isLookingForType && isTypeCol(e.cleanKey)) return false;
+              return e.cleanKey.includes(cKw) && e.valStr !== '';
+            });
+            if (match) return match.valStr;
+          }
+        }
+
+        return '';
+      };
+
+      // 1. Detect question type
+      const explicitTypeStr = getVal('tipesoal', 'tipe', 'jenissoal', 'jenis', 'type', 'formatsoal').toLowerCase();
+      const explicitClean = explicitTypeStr.replace(/[^a-z0-9]/g, '');
+      const sheetNameClean = sheetName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      let qType: QuestionType = 'multiple_choice';
+      let typeIdentified = false;
+
+      // Priority 1: Explicit column value
+      if (explicitClean) {
+        if (
+          explicitClean.includes('pilihan') ||
+          explicitClean.includes('ganda') ||
+          explicitClean === 'pg' ||
+          explicitClean === 'mc' ||
+          explicitClean.includes('multiple') ||
+          explicitClean.includes('choice')
+        ) {
+          qType = 'multiple_choice';
+          typeIdentified = true;
+        } else if (
+          explicitClean.includes('benar') ||
+          explicitClean.includes('salah') ||
+          explicitClean === 'bs' ||
+          explicitClean === 'tf' ||
+          explicitClean.includes('true') ||
+          explicitClean.includes('false')
+        ) {
           qType = 'true_false';
-        } else if (!hasOptions && (norm['kuncijawabansingkat'] || norm['kuncisingkat'] || rawKey.length > 1)) {
+          typeIdentified = true;
+        } else if (
+          explicitClean.includes('jodoh') ||
+          explicitClean.includes('menjodohkan') ||
+          explicitClean.includes('match') ||
+          explicitClean.includes('pasang')
+        ) {
+          qType = 'matching';
+          typeIdentified = true;
+        } else if (
+          explicitClean.includes('isian') ||
+          explicitClean.includes('singkat') ||
+          explicitClean.includes('isiansingkat') ||
+          explicitClean.includes('short') ||
+          explicitClean.includes('essay')
+        ) {
+          qType = 'short_answer';
+          typeIdentified = true;
+        } else if (
+          explicitClean.includes('gambar') ||
+          explicitClean.includes('bergambar') ||
+          explicitClean.includes('image') ||
+          explicitClean.includes('foto') ||
+          explicitClean.includes('visual')
+        ) {
+          qType = 'image_question';
+          typeIdentified = true;
+        }
+      }
+
+      // Priority 2: Sheet name
+      if (!typeIdentified) {
+        if (
+          sheetNameClean.includes('pilihan') ||
+          sheetNameClean.includes('ganda') ||
+          sheetNameClean.includes('pg') ||
+          sheetNameClean.includes('mc') ||
+          sheetNameClean.includes('multiple')
+        ) {
+          qType = 'multiple_choice';
+          typeIdentified = true;
+        } else if (
+          sheetNameClean.includes('benar') ||
+          sheetNameClean.includes('salah') ||
+          sheetNameClean.includes('bs') ||
+          sheetNameClean.includes('tf') ||
+          sheetNameClean.includes('true') ||
+          sheetNameClean.includes('false')
+        ) {
+          qType = 'true_false';
+          typeIdentified = true;
+        } else if (
+          sheetNameClean.includes('jodoh') ||
+          sheetNameClean.includes('match') ||
+          sheetNameClean.includes('pasang')
+        ) {
+          qType = 'matching';
+          typeIdentified = true;
+        } else if (
+          sheetNameClean.includes('isian') ||
+          sheetNameClean.includes('singkat') ||
+          sheetNameClean.includes('short')
+        ) {
+          qType = 'short_answer';
+          typeIdentified = true;
+        } else if (
+          sheetNameClean.includes('gambar') ||
+          sheetNameClean.includes('image') ||
+          sheetNameClean.includes('foto')
+        ) {
+          qType = 'image_question';
+          typeIdentified = true;
+        }
+      }
+
+      // Priority 3: Auto-detect based on row contents and column names
+      if (!typeIdentified) {
+        const rawImgCandidate = getVal(
+          'urlgambarkhususbergambar',
+          'urlgambar',
+          'imageurl',
+          'linkgambar',
+          'gambarurl',
+          'linkfoto',
+          'urlfoto'
+        );
+        const hasValidImg = isValidImageUrl(rawImgCandidate);
+        const hasMatchingPairs = Boolean(
+          getVal('premis1kiri', 'premis1', 'pasangan1kanan', 'pasangan1')
+        );
+        const hasOptions = Boolean(getVal('pilihana', 'opsia', 'a'));
+        const rawKey = getVal('kuncijawaban', 'kunci', 'jawaban').toUpperCase();
+
+        if (hasValidImg) {
+          qType = 'image_question';
+        } else if (hasMatchingPairs && !hasOptions) {
+          qType = 'matching';
+        } else if (
+          rawKey === 'BENAR' ||
+          rawKey === 'SALAH' ||
+          rawKey === 'TRUE' ||
+          rawKey === 'FALSE' ||
+          (rawKey === 'B' && !hasOptions) ||
+          (rawKey === 'S' && !hasOptions)
+        ) {
+          qType = 'true_false';
+        } else if (
+          !hasOptions &&
+          (Boolean(getVal('kuncijawabansingkat', 'kuncisingkat', 'jawabansingkat')) || rawKey.length > 1)
+        ) {
           qType = 'short_answer';
         } else {
           qType = 'multiple_choice';
         }
       }
 
-      // Question / statement text
-      const questionText = (
-        norm['soal'] ||
-        norm['pertanyaan'] ||
-        norm['pernyataan'] ||
-        norm['instruksi'] ||
-        norm['question'] ||
-        ''
-      ).toString().trim();
+      // 2. Extract Question / statement text
+      const questionText = getVal(
+        'pertanyaansoal',
+        'pernyataansoal',
+        'instruksisoalmenjodohkan',
+        'pertanyaaninstruksi',
+        'pertanyaan',
+        'pernyataan',
+        'instruksi',
+        'soal',
+        'question',
+        'prompt',
+        'teks'
+      );
 
       if (!questionText) {
         invalidCount++;
         return;
       }
 
-      // Points & explanation
-      const rawPoints = Number(norm['poin'] || norm['point'] || norm['points'] || norm['skor'] || 20);
+      // 3. Extract Points & Explanation
+      const rawPoints = Number(getVal('poin', 'point', 'points', 'skor', 'nilai', 'bobot') || 20);
       const points = isNaN(rawPoints) || rawPoints <= 0 ? 20 : rawPoints;
-      const explanation = (norm['pembahasan'] || norm['penjelasan'] || norm['explanation'] || '').toString().trim() || undefined;
+      const explanation =
+        getVal('pembahasan', 'penjelasan', 'keterangan', 'alasan', 'explanation', 'catatan') || undefined;
 
       const qId = `q_${Date.now()}_${sheetName}_${rowIdx}`;
 
+      // 4. Construct Question based on detected type
       if (qType === 'true_false') {
-        const rawKey = (
-          norm['kuncijawaban'] ||
-          norm['kunci'] ||
-          norm['jawaban'] ||
-          'BENAR'
-        ).toString().trim().toUpperCase();
+        const rawKey = getVal(
+          'kuncijawabanbenarsalah',
+          'kuncijawaban',
+          'kuncibenarsalah',
+          'kunci',
+          'jawaban',
+          'key'
+        ).toUpperCase();
 
-        const correctBool = !(rawKey.includes('SALAH') || rawKey === 'FALSE' || rawKey === '0' || rawKey === 'S');
+        const correctBool = !(
+          rawKey.includes('SALAH') ||
+          rawKey === 'FALSE' ||
+          rawKey === '0' ||
+          rawKey === 'S' ||
+          rawKey === 'TIDAK'
+        );
 
         parsedQuestions.push({
           id: qId,
@@ -506,8 +750,19 @@ export function parseQuestionsFromWorkbook(workbook: XLSX.WorkBook): {
       } else if (qType === 'matching') {
         const pairs: MatchingPair[] = [];
         for (let i = 1; i <= 6; i++) {
-          const premise = (norm[`premis${i}`] || (i === 1 ? norm['pilihana'] : i === 2 ? norm['pilihanc'] : '') || '').toString().trim();
-          const match = (norm[`pasangan${i}`] || (i === 1 ? norm['pilihanb'] : i === 2 ? norm['pilihand'] : '') || '').toString().trim();
+          const premise = getVal(
+            `premis${i}kiri`,
+            `premis${i}`,
+            i === 1 ? 'pilihanapremis1' : i === 2 ? 'pilihancpremis2' : '',
+            `kiri${i}`
+          );
+          const match = getVal(
+            `pasangan${i}kanan`,
+            `pasangan${i}`,
+            i === 1 ? 'pilihanbpasangan1' : i === 2 ? 'pilihandpasangan2' : '',
+            `kanan${i}`
+          );
+
           if (premise && match) {
             pairs.push({
               id: `p_${Date.now()}_${i}`,
@@ -518,7 +773,7 @@ export function parseQuestionsFromWorkbook(workbook: XLSX.WorkBook): {
         }
 
         if (pairs.length === 0) {
-          // Fallback if user just entered comma-separated
+          // Fallback if matching was structured differently
           pairs.push(
             { id: `p1`, premise: 'Premis A', match: 'Pasangan A' },
             { id: `p2`, premise: 'Premis B', match: 'Pasangan B' }
@@ -535,14 +790,16 @@ export function parseQuestionsFromWorkbook(workbook: XLSX.WorkBook): {
         });
         detectedTypesSet.add('matching');
       } else if (qType === 'short_answer') {
-        const correctText = (
-          norm['kuncijawabansingkat'] ||
-          norm['kuncisingkat'] ||
-          norm['kuncijawaban'] ||
-          norm['kunci'] ||
-          norm['jawaban'] ||
-          ''
-        ).toString().trim();
+        const correctText = getVal(
+          'kuncijawabansingkat',
+          'kuncisingkat',
+          'jawabansingkat',
+          'kuncijawaban',
+          'kunci',
+          'jawaban',
+          'answer',
+          'key'
+        );
 
         parsedQuestions.push({
           id: qId,
@@ -554,24 +811,31 @@ export function parseQuestionsFromWorkbook(workbook: XLSX.WorkBook): {
         });
         detectedTypesSet.add('short_answer');
       } else if (qType === 'image_question') {
-        const imageUrl = (
-          norm['urlgambar'] ||
-          norm['gambar'] ||
-          norm['imageurl'] ||
-          norm['foto'] ||
-          'https://images.unsplash.com/photo-1509228468518-180dd4864904?w=500&auto=format&fit=crop&q=60'
-        ).toString().trim();
+        const rawImg = getVal(
+          'urlgambarkhususbergambar',
+          'urlgambar',
+          'imageurl',
+          'linkgambar',
+          'gambarurl',
+          'linkfoto',
+          'urlfoto',
+          'gambar',
+          'foto'
+        );
+        const imageUrl = isValidImageUrl(rawImg)
+          ? rawImg
+          : 'https://images.unsplash.com/photo-1509228468518-180dd4864904?w=500&auto=format&fit=crop&q=60';
 
-        const optA = (norm['pilihana'] || norm['opsia'] || norm['a'] || 'Pilihan A').toString().trim();
-        const optB = (norm['pilihanb'] || norm['opsib'] || norm['b'] || 'Pilihan B').toString().trim();
-        const optC = (norm['pilihanc'] || norm['opsic'] || norm['c'] || 'Pilihan C').toString().trim();
-        const optD = (norm['pilihand'] || norm['opsid'] || norm['d'] || 'Pilihan D').toString().trim();
+        const optA = getVal('pilihana', 'opsia', 'a') || 'Pilihan A';
+        const optB = getVal('pilihanb', 'opsib', 'b') || 'Pilihan B';
+        const optC = getVal('pilihanc', 'opsic', 'c') || 'Pilihan C';
+        const optD = getVal('pilihand', 'opsid', 'd') || 'Pilihan D';
 
-        let keyStr = (norm['kuncijawaban'] || norm['kunci'] || norm['jawaban'] || 'A').toString().trim().toUpperCase();
+        const rawKey = getVal('kuncijawabanabcd', 'kuncijawaban', 'kunci', 'jawaban', 'key').toUpperCase();
         let correctAnswer = 0;
-        if (keyStr.includes('B') || keyStr === '2') correctAnswer = 1;
-        else if (keyStr.includes('C') || keyStr === '3') correctAnswer = 2;
-        else if (keyStr.includes('D') || keyStr === '4') correctAnswer = 3;
+        if (rawKey.includes('B') || rawKey === '1' || rawKey === '2') correctAnswer = 1;
+        else if (rawKey.includes('C') || rawKey === '2' || rawKey === '3') correctAnswer = 2;
+        else if (rawKey.includes('D') || rawKey === '3' || rawKey === '4') correctAnswer = 3;
 
         parsedQuestions.push({
           id: qId,
@@ -586,16 +850,16 @@ export function parseQuestionsFromWorkbook(workbook: XLSX.WorkBook): {
         detectedTypesSet.add('image_question');
       } else {
         // multiple_choice
-        const optA = (norm['pilihana'] || norm['opsia'] || norm['a'] || 'Pilihan A').toString().trim();
-        const optB = (norm['pilihanb'] || norm['opsib'] || norm['b'] || 'Pilihan B').toString().trim();
-        const optC = (norm['pilihanc'] || norm['opsic'] || norm['c'] || 'Pilihan C').toString().trim();
-        const optD = (norm['pilihand'] || norm['opsid'] || norm['d'] || 'Pilihan D').toString().trim();
+        const optA = getVal('pilihana', 'opsia', 'a', 'pilihanapremis1') || 'Pilihan A';
+        const optB = getVal('pilihanb', 'opsib', 'b', 'pilihanbpasangan1') || 'Pilihan B';
+        const optC = getVal('pilihanc', 'opsic', 'c', 'pilihancpremis2') || 'Pilihan C';
+        const optD = getVal('pilihand', 'opsid', 'd', 'pilihandpasangan2') || 'Pilihan D';
 
-        let keyStr = (norm['kuncijawaban'] || norm['kunci'] || norm['jawaban'] || 'A').toString().trim().toUpperCase();
+        const rawKey = getVal('kuncijawabanabcd', 'kuncijawaban', 'kunci', 'jawaban', 'key').toUpperCase();
         let correctAnswer = 0;
-        if (keyStr.includes('B') || keyStr === '2') correctAnswer = 1;
-        else if (keyStr.includes('C') || keyStr === '3') correctAnswer = 2;
-        else if (keyStr.includes('D') || keyStr === '4') correctAnswer = 3;
+        if (rawKey.includes('B') || rawKey === '1' || rawKey === '2') correctAnswer = 1;
+        else if (rawKey.includes('C') || rawKey === '2' || rawKey === '3') correctAnswer = 2;
+        else if (rawKey.includes('D') || rawKey === '3' || rawKey === '4') correctAnswer = 3;
 
         parsedQuestions.push({
           id: qId,
