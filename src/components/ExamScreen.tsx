@@ -1,8 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Send, Cloud, HelpCircle, ShieldAlert, AlertCircle } from 'lucide-react';
+import {
+  Clock,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  AlertTriangle,
+  Send,
+  Cloud,
+  HelpCircle,
+  ShieldAlert,
+  AlertCircle,
+  ListChecks,
+  ToggleLeft,
+  GitMerge,
+  Type,
+  Image as ImageIcon,
+  Check,
+  X
+} from 'lucide-react';
 import { doc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Exam, Submission, Question } from '../types';
+import { Exam, Submission, Question, QuestionType } from '../types';
 import { getShuffledQuestionsForStudent } from '../lib/shuffle';
 
 interface ExamScreenProps {
@@ -23,7 +41,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
   onFinishExam,
 }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, number>>({});
+  const [answers, setAnswers] = useState<Record<string, any>>({});
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [savingStatus, setSavingStatus] = useState<'saved' | 'saving' | 'error'>('saved');
@@ -42,22 +60,31 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     getShuffledQuestionsForStudent(exam.questions, studentName, examToken)
   ).current;
 
-  // Private map of correct answers used strictly for grading evaluation calculation ONLY
-  const correctAnswersMapRef = useRef<Record<string, number>>(
-    rawShuffledQuestions.reduce((acc, q) => {
-      acc[q.id] = q.correctAnswer;
-      return acc;
-    }, {} as Record<string, number>)
-  );
-
   // Sanitized questions exposed to student UI - strictly stripped of any answer keys or explanations
-  const shuffledQuestions = useRef<Omit<Question, 'correctAnswer' | 'explanation'>[]>(
-    rawShuffledQuestions.map(q => ({
-      id: q.id,
-      question: q.question,
-      options: q.options,
-      points: q.points,
-    }))
+  const shuffledQuestions = useRef(
+    rawShuffledQuestions.map(q => {
+      let randomizedMatchChoices: string[] = [];
+      if (q.matchingPairs && q.matchingPairs.length > 0) {
+        // Collect matches and sort alphabetically for choice selection
+        randomizedMatchChoices = [...q.matchingPairs.map(p => p.match)].sort();
+      }
+
+      return {
+        id: q.id,
+        type: (q.type || 'multiple_choice') as QuestionType,
+        question: q.question,
+        options: q.options || [],
+        points: q.points || 20,
+        matchingPairs: q.matchingPairs?.map(p => ({
+          id: p.id,
+          premise: p.premise,
+          match: '', // Stripped from student UI to prevent any answer key exposure
+        })),
+        matchChoices: randomizedMatchChoices,
+        imageUrl: q.imageUrl,
+        imageCaption: q.imageCaption,
+      };
+    })
   ).current;
 
   const totalDurationSeconds = Math.max(60, (Number(exam.durationMinutes) || 15) * 60);
@@ -66,7 +93,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
   const isSubmittedRef = useRef<boolean>(false);
   const [showTimeUpModal, setShowTimeUpModal] = useState<boolean>(false);
   const [showUnansweredModal, setShowUnansweredModal] = useState<boolean>(false);
-  const answersRef = useRef<Record<string, number>>(answers);
+  const answersRef = useRef<Record<string, any>>(answers);
 
   // Keep answersRef synced with latest state
   useEffect(() => {
@@ -169,11 +196,50 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     let earnedScore = 0;
     let maxPoints = 0;
 
-    shuffledQuestions.forEach((q) => {
+    rawShuffledQuestions.forEach((q) => {
       const points = q.points || 20;
       maxPoints += points;
-      if (currentAnswers[q.id] === correctAnswersMapRef.current[q.id]) {
-        earnedScore += points;
+      const type = (q.type || 'multiple_choice') as QuestionType;
+      const studentAns = currentAnswers[q.id];
+
+      if (studentAns !== undefined && studentAns !== null) {
+        if (type === 'multiple_choice' || type === 'image_question') {
+          if (studentAns === q.correctAnswer) {
+            earnedScore += points;
+          }
+        } else if (type === 'true_false') {
+          const expected = q.correctBool ?? (q.correctAnswer === 0);
+          if (studentAns === expected) {
+            earnedScore += points;
+          }
+        } else if (type === 'matching') {
+          const pairs = q.matchingPairs || [];
+          if (pairs.length > 0 && typeof studentAns === 'object') {
+            let correctCount = 0;
+            pairs.forEach((p) => {
+              if (
+                studentAns[p.id] &&
+                studentAns[p.id].toString().trim().toLowerCase() === p.match.trim().toLowerCase()
+              ) {
+                correctCount++;
+              }
+            });
+            const ratio = correctCount / pairs.length;
+            earnedScore += Math.round(ratio * points);
+          }
+        } else if (type === 'short_answer') {
+          if (typeof studentAns === 'string' && q.correctText) {
+            const normalizedStudent = studentAns.trim().toLowerCase();
+            const validAlternatives = q.correctText
+              .split(/[,;\/]/)
+              .map((s) => s.trim().toLowerCase())
+              .filter(Boolean);
+
+            if (validAlternatives.includes(normalizedStudent)) {
+              earnedScore += points;
+            }
+          }
+        }
       }
     });
 
@@ -200,8 +266,36 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       startedAt: new Date(startTimeRef.current).toISOString(),
       submittedAt: new Date().toISOString(),
       timeRemainingSeconds: Math.max(0, timeLeft),
-      shuffledQuestionIds: shuffledQuestions.map(q => q.id),
+      shuffledQuestionIds: shuffledQuestions.map((q) => q.id),
     };
+  };
+
+  // Helper to determine if a question has been fully answered
+  const isQuestionAnswered = (
+    q: (typeof shuffledQuestions)[0],
+    currentAnswers: Record<string, any>
+  ): boolean => {
+    const ans = currentAnswers[q.id];
+    if (ans === undefined || ans === null) return false;
+
+    const type = q.type || 'multiple_choice';
+
+    if (type === 'multiple_choice' || type === 'image_question') {
+      return typeof ans === 'number' && ans >= 0;
+    }
+    if (type === 'true_false') {
+      return typeof ans === 'boolean';
+    }
+    if (type === 'matching') {
+      if (typeof ans !== 'object' || ans === null) return false;
+      const requiredPairs = q.matchingPairs || [];
+      if (requiredPairs.length === 0) return true;
+      return requiredPairs.every((p) => Boolean(ans[p.id]?.toString().trim()));
+    }
+    if (type === 'short_answer') {
+      return typeof ans === 'string' && ans.trim().length > 0;
+    }
+    return false;
   };
 
   // Final Submit Handler
@@ -209,7 +303,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     // If student manually submits, verify that all questions are answered
     if (status === 'submitted') {
       const currentAnswers = answersRef.current;
-      const missing = shuffledQuestions.filter(q => currentAnswers[q.id] === undefined);
+      const missing = shuffledQuestions.filter((q) => !isQuestionAnswered(q, currentAnswers));
       if (missing.length > 0) {
         setShowUnansweredModal(true);
         setShowConfirmModal(false);
@@ -283,9 +377,9 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     return () => clearInterval(timer);
   }, [totalDurationSeconds]);
 
-  // Handle Option Selection with instant Firestore Sync
-  const handleSelectOption = async (questionId: string, optionIndex: number) => {
-    const updatedAnswers = { ...answers, [questionId]: optionIndex };
+  // Handle Answer Selection with instant Firestore Sync
+  const handleSetAnswer = async (questionId: string, value: any) => {
+    const updatedAnswers = { ...answers, [questionId]: value };
     setAnswers(updatedAnswers);
     setSavingStatus('saving');
 
@@ -314,11 +408,11 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
   };
 
   const currentQ = shuffledQuestions[currentIdx];
-  const answeredCount = Object.keys(answers).length;
   const totalQuestions = shuffledQuestions.length;
   const unansweredNumbers = shuffledQuestions
-    .map((q, idx) => (answers[q.id] === undefined ? idx + 1 : null))
+    .map((q, idx) => (!isQuestionAnswered(q, answers) ? idx + 1 : null))
     .filter((n): n is number => n !== null);
+  const answeredCount = totalQuestions - unansweredNumbers.length;
   const hasUnanswered = unansweredNumbers.length > 0;
 
   const handleAttemptFinish = () => {
@@ -418,69 +512,310 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
       <main className="flex-1 max-w-5xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Current Question Card */}
         <div className="lg:col-span-8 flex flex-col space-y-4">
-          <div key={currentQ?.id} className="card-3d p-5 md:p-7 flex-1 flex flex-col justify-between">
+          <div
+            key={`exam_card_${currentQ?.id}_${currentIdx}`}
+            className="card-3d p-5 md:p-7 flex-1 flex flex-col justify-between select-none"
+          >
             <div>
-              {/* Question Header */}
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
-                <span className="inline-flex items-center space-x-1.5 text-xs font-black text-indigo-700 bg-indigo-50 px-3.5 py-1.5 rounded-xl border border-indigo-100 shadow-xs">
-                  <span>Soal No. {currentIdx + 1}</span>
-                  <span className="text-indigo-300">/</span>
-                  <span className="text-slate-500">{totalQuestions}</span>
-                </span>
+              {/* Question Header with Type Badge */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-slate-100 mb-5">
+                <div className="flex items-center space-x-2">
+                  <span className="inline-flex items-center space-x-1.5 text-xs font-black text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100 shadow-xs">
+                    <span>Soal No. {currentIdx + 1}</span>
+                    <span className="text-indigo-300">/</span>
+                    <span className="text-slate-500">{totalQuestions}</span>
+                  </span>
+
+                  {/* Type Badge */}
+                  {currentQ?.type === 'true_false' && (
+                    <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl text-[11px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                      <ToggleLeft className="w-3.5 h-3.5 text-purple-600" />
+                      <span>Benar / Salah</span>
+                    </span>
+                  )}
+                  {currentQ?.type === 'matching' && (
+                    <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      <GitMerge className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Menjodohkan</span>
+                    </span>
+                  )}
+                  {currentQ?.type === 'short_answer' && (
+                    <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl text-[11px] font-black bg-amber-100 text-amber-900 border border-amber-200">
+                      <Type className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Isian Singkat</span>
+                    </span>
+                  )}
+                  {currentQ?.type === 'image_question' && (
+                    <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl text-[11px] font-black bg-pink-100 text-pink-800 border border-pink-200">
+                      <ImageIcon className="w-3.5 h-3.5 text-pink-600" />
+                      <span>Soal Bergambar</span>
+                    </span>
+                  )}
+                  {(!currentQ?.type || currentQ?.type === 'multiple_choice') && (
+                    <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl text-[11px] font-black bg-blue-100 text-blue-800 border border-blue-200">
+                      <ListChecks className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Pilihan Ganda</span>
+                    </span>
+                  )}
+                </div>
 
                 <span className="text-xs font-extrabold text-slate-500 bg-slate-100 px-3 py-1 rounded-xl">
                   Bobot: {currentQ?.points || 20} Poin
                 </span>
               </div>
 
+              {/* Optional Image Banner for image_question */}
+              {currentQ?.type === 'image_question' && currentQ?.imageUrl && (
+                <div className="mb-5 p-2 bg-slate-50 rounded-2xl border-2 border-slate-200/90 flex flex-col items-center justify-center">
+                  <img
+                    src={currentQ.imageUrl}
+                    alt="Visual Soal"
+                    className="max-h-64 sm:max-h-72 w-auto max-w-full rounded-xl object-contain shadow-xs border border-slate-200"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src =
+                        'https://images.unsplash.com/photo-1509228468518-180dd4864904?w=500&auto=format&fit=crop&q=60';
+                    }}
+                  />
+                  {currentQ.imageCaption && (
+                    <p className="text-[11px] text-slate-500 font-semibold mt-2 italic text-center">
+                      {currentQ.imageCaption}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Question Text */}
               <p className="text-base md:text-lg font-extrabold text-slate-900 leading-relaxed mb-6 font-heading">
                 {currentQ?.question}
               </p>
 
-              {/* Options Radio List */}
-              <div className="space-y-3">
-                {currentQ?.options.map((opt, oIdx) => {
-                  const isSelected = answers[currentQ.id] === oIdx;
-                  const optionLabel = String.fromCharCode(65 + oIdx); // A, B, C, D
+              {/* 1. Multiple Choice / 5. Image Question Options */}
+              {(!currentQ?.type || currentQ?.type === 'multiple_choice' || currentQ?.type === 'image_question') && (
+                <div key={`options_list_${currentQ?.id}`} className="space-y-3">
+                  {currentQ?.options.map((opt, oIdx) => {
+                    const isSelected = answers[currentQ.id] === oIdx;
+                    const optionLabel = String.fromCharCode(65 + oIdx); // A, B, C, D
 
-                  return (
-                    <button
-                      key={`${currentQ.id}_opt_${oIdx}`}
-                      type="button"
-                      onClick={() => handleSelectOption(currentQ.id, oIdx)}
-                      className={`w-full text-left p-4 rounded-2xl border-2 transition-[border-color,background-color,box-shadow,transform] duration-150 flex items-center justify-between group cursor-pointer ${
-                        isSelected
-                          ? 'border-indigo-600 bg-indigo-50/90 text-indigo-950 font-bold shadow-[0_4px_14px_rgba(79,70,229,0.15)] translate-x-1'
-                          : 'border-slate-200/90 bg-slate-50 hover:bg-slate-100 text-slate-800'
-                      }`}
-                    >
-                      <div className="flex items-start space-x-3.5">
-                        <span
-                          className={`w-8 h-8 rounded-xl text-xs font-black flex items-center justify-center shrink-0 transition-colors shadow-xs ${
-                            isSelected
-                              ? 'bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white border-b-2 border-indigo-800'
-                              : 'bg-white border-2 border-slate-300 text-slate-600 group-hover:border-indigo-400 group-hover:text-indigo-600'
-                          }`}
-                        >
-                          {optionLabel}
-                        </span>
-                        <span className="text-sm font-bold pt-1 leading-snug">{opt}</span>
-                      </div>
-
-                      <div
-                        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
+                    return (
+                      <button
+                        key={`${currentQ.id}_opt_${oIdx}`}
+                        type="button"
+                        onClick={() => handleSetAnswer(currentQ.id, oIdx)}
+                        className={`w-full text-left p-4 rounded-2xl border-2 flex items-center justify-between group cursor-pointer ${
                           isSelected
-                            ? 'border-indigo-600 bg-indigo-600 text-white shadow-xs'
-                            : 'border-slate-300 group-hover:border-indigo-400'
+                            ? 'border-indigo-600 bg-indigo-50/90 text-indigo-950 font-bold shadow-[0_4px_14px_rgba(79,70,229,0.15)] translate-x-1'
+                            : 'border-slate-200/90 bg-slate-50 hover:bg-slate-100 text-slate-800'
                         }`}
                       >
-                        {isSelected && <div className="w-2.5 h-2.5 rounded-full bg-white"></div>}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                        <div className="flex items-start space-x-3.5">
+                          <span
+                            className={`w-8 h-8 rounded-xl text-xs font-black flex items-center justify-center shrink-0 shadow-xs ${
+                              isSelected
+                                ? 'bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white border-b-2 border-indigo-800'
+                                : 'bg-white border-2 border-slate-300 text-slate-600 group-hover:border-indigo-400 group-hover:text-indigo-600'
+                            }`}
+                          >
+                            {optionLabel}
+                          </span>
+                          <span className="text-sm font-bold pt-1 leading-snug">{opt}</span>
+                        </div>
+
+                        <div
+                          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                            isSelected
+                              ? 'border-indigo-600 bg-indigo-600 text-white shadow-xs'
+                              : 'border-slate-300 group-hover:border-indigo-400'
+                          }`}
+                        >
+                          {isSelected && <div className="w-2.5 h-2.5 rounded-full bg-white"></div>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* 2. True / False Selection Cards */}
+              {currentQ?.type === 'true_false' && (
+                <div key={`tf_list_${currentQ?.id}`} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Card BENAR */}
+                  {(() => {
+                    const isBenar = answers[currentQ.id] === true;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleSetAnswer(currentQ.id, true)}
+                        className={`p-5 rounded-2xl border-2 flex items-center justify-between cursor-pointer transition-all ${
+                          isBenar
+                            ? 'border-emerald-600 bg-emerald-50/90 text-emerald-950 font-black shadow-md ring-2 ring-emerald-500/20 translate-y-[-2px]'
+                            : 'border-slate-200/90 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-3.5">
+                          <div
+                            className={`w-11 h-11 rounded-2xl flex items-center justify-center shadow-xs ${
+                              isBenar
+                                ? 'bg-emerald-600 text-white border-b-2 border-emerald-800'
+                                : 'bg-emerald-100 text-emerald-700'
+                            }`}
+                          >
+                            <Check className="w-6 h-6 stroke-[3]" />
+                          </div>
+                          <div className="text-left">
+                            <span className="text-base font-black tracking-wide block">BENAR</span>
+                            <span className="text-[11px] text-slate-500 font-semibold leading-tight">
+                              Pernyataan di atas adalah Benar
+                            </span>
+                          </div>
+                        </div>
+
+                        <div
+                          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                            isBenar ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300'
+                          }`}
+                        >
+                          {isBenar && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
+                        </div>
+                      </button>
+                    );
+                  })()}
+
+                  {/* Card SALAH */}
+                  {(() => {
+                    const isSalah = answers[currentQ.id] === false;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleSetAnswer(currentQ.id, false)}
+                        className={`p-5 rounded-2xl border-2 flex items-center justify-between cursor-pointer transition-all ${
+                          isSalah
+                            ? 'border-rose-600 bg-rose-50/90 text-rose-950 font-black shadow-md ring-2 ring-rose-500/20 translate-y-[-2px]'
+                            : 'border-slate-200/90 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-3.5">
+                          <div
+                            className={`w-11 h-11 rounded-2xl flex items-center justify-center shadow-xs ${
+                              isSalah
+                                ? 'bg-rose-600 text-white border-b-2 border-rose-800'
+                                : 'bg-rose-100 text-rose-700'
+                            }`}
+                          >
+                            <X className="w-6 h-6 stroke-[3]" />
+                          </div>
+                          <div className="text-left">
+                            <span className="text-base font-black tracking-wide block">SALAH</span>
+                            <span className="text-[11px] text-slate-500 font-semibold leading-tight">
+                              Pernyataan di atas adalah Salah
+                            </span>
+                          </div>
+                        </div>
+
+                        <div
+                          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                            isSalah ? 'border-rose-600 bg-rose-600 text-white' : 'border-slate-300'
+                          }`}
+                        >
+                          {isSalah && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
+                        </div>
+                      </button>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* 3. Matching Questions Interactive UI */}
+              {currentQ?.type === 'matching' && (
+                <div key={`matching_list_${currentQ?.id}`} className="space-y-3.5">
+                  <div className="p-3 bg-indigo-50/90 rounded-2xl border border-indigo-200/70 text-xs font-bold text-indigo-950 flex flex-wrap items-center justify-between gap-2">
+                    <span className="flex items-center space-x-2">
+                      <GitMerge className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span>Pasangkan setiap premis di kolom kiri dengan pilihan yang tepat di sebelah kanan:</span>
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-lg bg-indigo-200/80 font-mono text-[11px] font-black text-indigo-900">
+                      {
+                        Object.keys(answers[currentQ.id] || {}).filter((k) =>
+                          Boolean(answers[currentQ.id]?.[k]?.toString().trim())
+                        ).length
+                      }{' '}
+                      / {currentQ.matchingPairs?.length || 0} Terhubung
+                    </span>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {currentQ.matchingPairs?.map((pair, pIdx) => {
+                      const selectedMatch = answers[currentQ.id]?.[pair.id] || '';
+
+                      return (
+                        <div
+                          key={pair.id}
+                          className="p-3.5 bg-slate-50 border-2 border-slate-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs"
+                        >
+                          <div className="flex items-center space-x-3 sm:max-w-[45%]">
+                            <span className="w-7 h-7 rounded-xl bg-indigo-600 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-xs">
+                              {pIdx + 1}
+                            </span>
+                            <span className="text-xs font-extrabold text-slate-800 leading-snug">
+                              {pair.premise}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center space-x-2 flex-1 sm:max-w-[52%]">
+                            <span className="text-indigo-400 font-black text-xs hidden sm:inline">➜</span>
+                            <select
+                              value={selectedMatch}
+                              onChange={(e) => {
+                                const currentMap = { ...(answers[currentQ.id] || {}) };
+                                currentMap[pair.id] = e.target.value;
+                                handleSetAnswer(currentQ.id, currentMap);
+                              }}
+                              className={`w-full p-2.5 rounded-xl text-xs font-bold border-2 focus:outline-none transition-colors cursor-pointer ${
+                                selectedMatch
+                                  ? 'bg-emerald-50 border-emerald-500 text-emerald-950 font-black shadow-2xs'
+                                  : 'bg-white border-slate-300 text-slate-600 focus:border-indigo-500'
+                              }`}
+                            >
+                              <option value="">-- Pilih Pasangan yang Sesuai --</option>
+                              {currentQ.matchChoices?.map((choice, cIdx) => (
+                                <option key={cIdx} value={choice}>
+                                  {choice}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. Short Answer Input UI */}
+              {currentQ?.type === 'short_answer' && (
+                <div key={`short_ans_${currentQ?.id}`} className="space-y-4">
+                  <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 font-semibold flex items-center space-x-2">
+                    <Type className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      <strong>Petunjuk:</strong> Ketik jawaban singkat secara langsung di bawah ini. Sistem tidak membedakan huruf besar/kecil.
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={answers[currentQ.id] || ''}
+                      onChange={(e) => handleSetAnswer(currentQ.id, e.target.value)}
+                      placeholder="Ketik jawaban singkat Anda di sini..."
+                      className="w-full p-4 pr-24 rounded-2xl border-2 border-slate-300 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 bg-white text-sm font-extrabold text-slate-900 placeholder:text-slate-400 focus:outline-none shadow-xs transition-colors"
+                    />
+                    {typeof answers[currentQ.id] === 'string' && answers[currentQ.id].trim().length > 0 && (
+                      <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-emerald-700 text-xs font-black bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200">
+                        ✓ Terisi
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Bottom Question Controls */}
@@ -589,7 +924,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
             {/* Number Palette Grid */}
             <div className="grid grid-cols-5 gap-2.5 mb-5">
               {shuffledQuestions.map((q, idx) => {
-                const isAnswered = answers[q.id] !== undefined;
+                const isAnswered = isQuestionAnswered(q, answers);
                 const isCurrent = currentIdx === idx;
 
                 return (

@@ -209,9 +209,44 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
 
             <div className="space-y-4">
               {displayQuestions.map((q, qIdx) => {
-                const studentAnswerIdx = submission.answers[q.id];
-                const isCorrect = studentAnswerIdx === q.correctAnswer;
-                const pointsEarned = isCorrect ? (q.points || 20) : 0;
+                const type = q.type || 'multiple_choice';
+                const studentAns = submission.answers[q.id];
+                let isCorrect = false;
+                let pointsEarned = 0;
+
+                if (type === 'multiple_choice' || type === 'image_question') {
+                  isCorrect = studentAns === q.correctAnswer;
+                  pointsEarned = isCorrect ? (q.points || 20) : 0;
+                } else if (type === 'true_false') {
+                  const expected = q.correctBool ?? (q.correctAnswer === 0);
+                  isCorrect = studentAns === expected;
+                  pointsEarned = isCorrect ? (q.points || 20) : 0;
+                } else if (type === 'matching') {
+                  const pairs = q.matchingPairs || [];
+                  if (pairs.length > 0 && typeof studentAns === 'object') {
+                    let correctCount = 0;
+                    pairs.forEach((p) => {
+                      if (
+                        studentAns[p.id] &&
+                        studentAns[p.id].toString().trim().toLowerCase() === p.match.trim().toLowerCase()
+                      ) {
+                        correctCount++;
+                      }
+                    });
+                    isCorrect = correctCount === pairs.length;
+                    pointsEarned = Math.round((correctCount / pairs.length) * (q.points || 20));
+                  }
+                } else if (type === 'short_answer') {
+                  if (typeof studentAns === 'string' && q.correctText) {
+                    const normalizedStudent = studentAns.trim().toLowerCase();
+                    const validAlternatives = q.correctText
+                      .split(/[,;\/]/)
+                      .map((s) => s.trim().toLowerCase())
+                      .filter(Boolean);
+                    isCorrect = validAlternatives.includes(normalizedStudent);
+                    pointsEarned = isCorrect ? (q.points || 20) : 0;
+                  }
+                }
 
                 return (
                   <div
@@ -232,9 +267,24 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
                         >
                           {qIdx + 1}
                         </span>
-                        <h4 className="text-sm font-bold text-slate-900 leading-snug">
-                          {q.question}
-                        </h4>
+                        <div>
+                          <div className="flex items-center space-x-2 mb-1">
+                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-lg bg-slate-200/80 text-slate-700">
+                              {type === 'true_false'
+                                ? 'Benar / Salah'
+                                : type === 'matching'
+                                ? 'Menjodohkan'
+                                : type === 'short_answer'
+                                ? 'Isian Singkat'
+                                : type === 'image_question'
+                                ? 'Soal Bergambar'
+                                : 'Pilihan Ganda'}
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-bold text-slate-900 leading-snug">
+                            {q.question}
+                          </h4>
+                        </div>
                       </div>
 
                       <span
@@ -244,52 +294,155 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({ submission, exam, on
                             : 'bg-rose-100 text-rose-900 border-rose-300'
                         }`}
                       >
-                        {isCorrect ? `+${pointsEarned} Poin` : '0 Poin'}
+                        {pointsEarned > 0 ? `+${pointsEarned} Poin` : '0 Poin'}
                       </span>
                     </div>
 
-                    {/* Options review */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
-                      {q.options.map((opt, oIdx) => {
-                        const isStudentSelected = studentAnswerIdx === oIdx;
-                        const isOptionCorrect = q.correctAnswer === oIdx;
-                        const optionLabel = String.fromCharCode(65 + oIdx);
+                    {/* Image preview for image_question */}
+                    {type === 'image_question' && q.imageUrl && (
+                      <div className="my-3 p-2 bg-white rounded-xl border border-slate-200 inline-block">
+                        <img
+                          src={q.imageUrl}
+                          alt="Visual Soal"
+                          className="max-h-40 rounded-lg object-contain"
+                        />
+                      </div>
+                    )}
 
-                        let badgeStyle = 'bg-white border-slate-200 text-slate-700';
-                        if (isOptionCorrect) {
-                          badgeStyle = 'bg-emerald-100 border-emerald-400 text-emerald-950 font-bold shadow-xs';
-                        } else if (isStudentSelected && !isOptionCorrect) {
-                          badgeStyle = 'bg-rose-100 border-rose-400 text-rose-950 font-bold shadow-xs';
-                        }
+                    {/* Review for Multiple Choice & Image Question */}
+                    {(type === 'multiple_choice' || type === 'image_question') && q.options && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+                        {q.options.map((opt, oIdx) => {
+                          const isStudentSelected = studentAns === oIdx;
+                          const isOptionCorrect = q.correctAnswer === oIdx;
+                          const optionLabel = String.fromCharCode(65 + oIdx);
 
-                        return (
-                          <div
-                            key={oIdx}
-                            className={`p-3 rounded-xl border-2 text-xs flex items-center justify-between ${badgeStyle}`}
+                          let badgeStyle = 'bg-white border-slate-200 text-slate-700';
+                          if (isOptionCorrect) {
+                            badgeStyle = 'bg-emerald-100 border-emerald-400 text-emerald-950 font-bold shadow-xs';
+                          } else if (isStudentSelected && !isOptionCorrect) {
+                            badgeStyle = 'bg-rose-100 border-rose-400 text-rose-950 font-bold shadow-xs';
+                          }
+
+                          return (
+                            <div
+                              key={oIdx}
+                              className={`p-3 rounded-xl border-2 text-xs flex items-center justify-between ${badgeStyle}`}
+                            >
+                              <div className="flex items-center space-x-2">
+                                <span className="font-black">{optionLabel}.</span>
+                                <span className="font-semibold">{opt}</span>
+                              </div>
+
+                              <div className="flex items-center space-x-1 shrink-0">
+                                {isOptionCorrect && (
+                                  <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-md flex items-center space-x-0.5 shadow-xs">
+                                    <Check className="w-3 h-3" />
+                                    <span>Kunci</span>
+                                  </span>
+                                )}
+                                {isStudentSelected && !isOptionCorrect && (
+                                  <span className="text-[10px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-md flex items-center space-x-0.5 shadow-xs">
+                                    <X className="w-3 h-3" />
+                                    <span>Jawaban Anda</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Review for True / False */}
+                    {type === 'true_false' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-3">
+                        {[true, false].map((tfVal) => {
+                          const label = tfVal ? 'BENAR' : 'SALAH';
+                          const expectedBool = q.correctBool ?? (q.correctAnswer === 0);
+                          const isOptionCorrect = expectedBool === tfVal;
+                          const isStudentSelected = studentAns === tfVal;
+
+                          let style = 'bg-white border-slate-200 text-slate-700';
+                          if (isOptionCorrect) {
+                            style = 'bg-emerald-100 border-emerald-400 text-emerald-950 font-bold';
+                          } else if (isStudentSelected && !isOptionCorrect) {
+                            style = 'bg-rose-100 border-rose-400 text-rose-950 font-bold';
+                          }
+
+                          return (
+                            <div
+                              key={label}
+                              className={`p-3 rounded-xl border-2 text-xs flex items-center justify-between ${style}`}
+                            >
+                              <span className="font-black">{label}</span>
+                              <div className="flex items-center space-x-1">
+                                {isOptionCorrect && (
+                                  <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-md">
+                                    Kunci Benar
+                                  </span>
+                                )}
+                                {isStudentSelected && !isOptionCorrect && (
+                                  <span className="text-[10px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-md">
+                                    Jawaban Anda
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Review for Matching */}
+                    {type === 'matching' && q.matchingPairs && (
+                      <div className="mt-3 space-y-2">
+                        {q.matchingPairs.map((pair) => {
+                          const userMatch = studentAns?.[pair.id] || '(Kosong)';
+                          const isPairCorrect =
+                            userMatch.trim().toLowerCase() === pair.match.trim().toLowerCase();
+
+                          return (
+                            <div
+                              key={pair.id}
+                              className={`p-2.5 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 ${
+                                isPairCorrect
+                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                                  : 'bg-rose-50 border-rose-200 text-rose-950'
+                              }`}
+                            >
+                              <div className="font-bold">
+                                <span>{pair.premise}</span>
+                                <span className="text-slate-400 mx-1.5">➜</span>
+                                <span>Jawaban Siswa: <strong>{userMatch}</strong></span>
+                              </div>
+                              <div className="text-[11px] font-semibold text-slate-600">
+                                Kunci Tepat: <strong className="text-emerald-700">{pair.match}</strong>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Review for Short Answer */}
+                    {type === 'short_answer' && (
+                      <div className="mt-3 p-3 rounded-xl bg-white border border-slate-200 text-xs space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span>Jawaban Siswa: <strong>{studentAns || '(Tidak diisi)'}</strong></span>
+                          <span
+                            className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                              isCorrect ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            }`}
                           >
-                            <div className="flex items-center space-x-2">
-                              <span className="font-black">{optionLabel}.</span>
-                              <span className="font-semibold">{opt}</span>
-                            </div>
-
-                            <div className="flex items-center space-x-1 shrink-0">
-                              {isOptionCorrect && (
-                                <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-md flex items-center space-x-0.5 shadow-xs">
-                                  <Check className="w-3 h-3" />
-                                  <span>Kunci</span>
-                                </span>
-                              )}
-                              {isStudentSelected && !isOptionCorrect && (
-                                <span className="text-[10px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-md flex items-center space-x-0.5 shadow-xs">
-                                  <X className="w-3 h-3" />
-                                  <span>Jawaban Anda</span>
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                            {isCorrect ? 'Tepat' : 'Tidak Sesuai'}
+                          </span>
+                        </div>
+                        <div className="text-slate-600">
+                          Kunci Jawaban Guru: <strong className="text-emerald-700">{q.correctText}</strong>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Explanation if available */}
                     {q.explanation && (
