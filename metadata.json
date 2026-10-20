@@ -1,0 +1,6 @@
+{
+  "name": "Exam Edu",
+  "description": "Aplikasi ujian online interaktif dengan token akses, sinkronisasi real-time Firebase, dan penilaian otomatis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
