@@ -7,6 +7,7 @@ import {
   deleteDoc,
   onSnapshot,
   query,
+  where,
   orderBy,
   limit,
   serverTimestamp,
@@ -76,8 +77,8 @@ export async function createGameRoom(params: {
   const roomData: GameRoom = {
     id: roomId,
     title: title ? title.trim() : `Game Race - ${exam.title}`,
-    examToken: exam.token,
-    examTitle: exam.title,
+    examToken: (exam.token || '').trim().toUpperCase(),
+    examTitle: exam.title || '',
     hostName: hostName || 'Guru Pengawas',
     status: 'waiting',
     currentQuestionIndex: 0,
@@ -121,7 +122,60 @@ export function listenToGameRoom(roomId: string, callback: (room: GameRoom | nul
 }
 
 /**
- * Joins a player into a game room
+ * Find an active Game Room by PIN or Exam Token (3-tier lookup)
+ */
+export async function findGameRoomByCode(code: string): Promise<GameRoom | null> {
+  const cleanCode = code.trim().toUpperCase();
+  if (!cleanCode) return null;
+
+  // 1. Check direct doc ID (PIN)
+  try {
+    const roomRef = doc(db, 'gameRooms', cleanCode);
+    const snap = await getDoc(roomRef);
+    if (snap.exists()) {
+      const data = { id: snap.id, ...snap.data() } as GameRoom;
+      if (data.status === 'waiting' || data.status === 'in_progress') {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Direct room lookup note:', err);
+  }
+
+  // 2. Check by examToken in gameRooms
+  try {
+    const q = query(collection(db, 'gameRooms'), where('examToken', '==', cleanCode));
+    const snap = await getDocs(q);
+    const active = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() } as GameRoom))
+      .find((r) => r.status === 'waiting' || r.status === 'in_progress');
+    if (active) return active;
+  } catch (err) {
+    console.warn('Query by examToken note:', err);
+  }
+
+  // 3. Fallback: Scan all active game rooms with trimmed and case-insensitive check
+  try {
+    const allSnap = await getDocs(collection(db, 'gameRooms'));
+    const matched = allSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() } as GameRoom))
+      .find((r) => {
+        const isLive = r.status === 'waiting' || r.status === 'in_progress';
+        if (!isLive) return false;
+        const idMatches = (r.id || '').trim().toUpperCase() === cleanCode;
+        const tokenMatches = (r.examToken || '').trim().toUpperCase() === cleanCode;
+        return idMatches || tokenMatches;
+      });
+    if (matched) return matched;
+  } catch (err) {
+    console.warn('Fallback scan gameRooms note:', err);
+  }
+
+  return null;
+}
+
+/**
+ * Joins a player into a game room (supports both 6-digit PIN and Exam Token)
  */
 export async function joinGameRoom(params: {
   roomId: string;
@@ -134,13 +188,15 @@ export async function joinGameRoom(params: {
 }): Promise<GamePlayer> {
   const { roomId, playerId, name, school = '', grade = '', avatar, vehicleType } = params;
 
-  const roomRef = doc(db, 'gameRooms', roomId);
-  const roomSnap = await getDoc(roomRef);
-  if (!roomSnap.exists()) {
-    throw new Error('Kode PIN Game Race tidak ditemukan!');
+  const foundRoom = await findGameRoomByCode(roomId);
+  if (!foundRoom) {
+    throw new Error('Kode PIN / Token Game Race tidak ditemukan atau ruang sudah tidak aktif!');
   }
 
-  const room = roomSnap.data() as GameRoom;
+  const targetRoomId = foundRoom.id;
+  const roomRef = doc(db, 'gameRooms', targetRoomId);
+  const room = foundRoom;
+
   if (room.status === 'finished' || room.status === 'abandoned') {
     throw new Error('Sesi Game Race ini sudah berakhir.');
   }
@@ -148,19 +204,19 @@ export async function joinGameRoom(params: {
   const randomVehicle = VEHICLE_OPTIONS[Math.floor(Math.random() * VEHICLE_OPTIONS.length)];
   const randomAvatar = AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)];
 
-  const playerRef = doc(db, 'gameRooms', roomId, 'players', playerId);
+  const playerRef = doc(db, 'gameRooms', targetRoomId, 'players', playerId);
   const playerSnap = await getDoc(playerRef);
 
   let playerData: GamePlayer;
 
   if (playerSnap.exists()) {
     // Rejoin existing player in room
-    playerData = { ...playerSnap.data(), lastActiveAt: new Date().toISOString() } as GamePlayer;
+    playerData = { ...playerSnap.data(), roomId: targetRoomId, lastActiveAt: new Date().toISOString() } as GamePlayer;
     await updateDoc(playerRef, { lastActiveAt: new Date().toISOString() });
   } else {
     playerData = {
       id: playerId,
-      roomId,
+      roomId: targetRoomId,
       name: name.trim().toUpperCase(),
       school,
       grade,

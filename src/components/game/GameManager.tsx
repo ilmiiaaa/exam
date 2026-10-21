@@ -18,6 +18,12 @@ import { db } from '../../lib/firebase';
 interface GameManagerProps {
   initialRoom?: GameRoom | null;
   initialPlayer?: GamePlayer | null;
+  prefilledData?: {
+    name?: string;
+    school?: string;
+    grade?: string;
+    pin?: string;
+  } | null;
   isHost?: boolean;
   onExitGame: () => void;
   onOpenTeacherPanel?: () => void;
@@ -26,6 +32,7 @@ interface GameManagerProps {
 export const GameManager: React.FC<GameManagerProps> = ({
   initialRoom = null,
   initialPlayer = null,
+  prefilledData = null,
   isHost = false,
   onExitGame,
 }) => {
@@ -33,6 +40,14 @@ export const GameManager: React.FC<GameManagerProps> = ({
   const [currentPlayer, setCurrentPlayer] = useState<GamePlayer | null>(initialPlayer);
   const [players, setPlayers] = useState<GamePlayer[]>([]);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
+
+  useEffect(() => {
+    setCurrentRoom(initialRoom);
+  }, [initialRoom]);
+
+  useEffect(() => {
+    setCurrentPlayer(initialPlayer);
+  }, [initialPlayer]);
 
   const roomId = currentRoom?.id;
 
@@ -125,6 +140,10 @@ export const GameManager: React.FC<GameManagerProps> = ({
   if (!currentRoom) {
     return (
       <GameModeEntry
+        initialName={prefilledData?.name}
+        initialSchool={prefilledData?.school}
+        initialGrade={prefilledData?.grade}
+        initialPin={prefilledData?.pin}
         onJoinSuccess={handleJoinSuccess}
         onBackToExamLogin={onExitGame}
       />

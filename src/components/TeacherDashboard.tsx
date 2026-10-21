@@ -3947,8 +3947,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                               <h4 className="font-black text-sm text-slate-800 mt-0.5 line-clamp-1">
                                 {room.title}
                               </h4>
-                              <p className="text-xs text-slate-400">
-                                Paket: <strong>{room.examTitle}</strong> ({room.totalQuestions} Soal)
+                              <p className="text-xs text-slate-500 font-medium mt-0.5">
+                                Paket: <strong className="text-slate-800">{room.examTitle}</strong> • Token: <code className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-mono font-bold text-[11px]">{room.examToken || room.id}</code>
+                              </p>
+                              <p className="text-[10px] text-slate-400">
+                                Peserta dapat memasukkan PIN <strong className="text-amber-700">{room.id}</strong> di menu login untuk langsung bergabung.
                               </p>
                             </div>
 

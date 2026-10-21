@@ -1,17 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { User, KeyRound, ArrowRight, ShieldCheck, AlertCircle, Sparkles, Lock, X, Building, GraduationCap, ArrowLeft, CheckCircle2, Users, RefreshCw } from 'lucide-react';
+import { User, KeyRound, ArrowRight, ShieldCheck, AlertCircle, Sparkles, Lock, X, Building, GraduationCap, ArrowLeft, CheckCircle2, Users, RefreshCw, Car } from 'lucide-react';
 import { collection, onSnapshot, query, where, getDoc, doc, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Exam, Submission, ParticipantSystemMode } from '../types';
+import { GameRoom, GamePlayer } from '../types/game';
+import { findGameRoomByCode, joinGameRoom } from '../lib/gameService';
+import { gameSound } from '../lib/gameSound';
 import { SCHOOL_LIST, GRADE_LIST } from '../data/schools';
 
 interface LoginScreenProps {
   onStartExam: (studentName: string, schoolName: string, gradeName: string, examToken: string, examData: Exam) => void;
   onOpenTeacherPanel: () => void;
-  onSwitchToGameMode?: () => void;
+  onSwitchToGameMode?: (initialData?: { name?: string; school?: string; grade?: string; pin?: string }) => void;
+  onJoinGameRoom?: (room: GameRoom, player: GamePlayer) => void;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTeacherPanel, onSwitchToGameMode }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({
+  onStartExam,
+  onOpenTeacherPanel,
+  onSwitchToGameMode,
+  onJoinGameRoom,
+}) => {
   const [step, setStep] = useState<1 | 2>(1);
   const [studentName, setStudentName] = useState('');
   const [schoolName, setSchoolName] = useState<string>('');
@@ -136,7 +145,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
     setStep(2);
   };
 
-  // Step 2: Validate token and start exam
+  // Step 2: Validate token and start exam or join Game Race
   const handleStart = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -151,56 +160,97 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
     }
 
     if (!cleanToken) {
-      setErrorMsg('Harap masukkan Token Ujian.');
+      setErrorMsg('Harap masukkan Token Ujian atau PIN Game Race.');
       return;
     }
 
     setLoading(true);
 
     try {
-      // Find token in activeExams
+      // 1. Check if token matches an active online exam
       const match = activeExams.find(ex => ex.token.toUpperCase() === cleanToken);
 
-      if (!match) {
-        setErrorMsg('Token Ujian tidak ditemukan atau sedang tidak aktif.');
-        setLoading(false);
-        return;
-      }
-
-      if (!match.questions || match.questions.length === 0) {
-        setErrorMsg('Ujian ini belum memiliki soal. Harap hubungi pengawas.');
-        setLoading(false);
-        return;
-      }
-
-      // Check if student has already completed this exam
-      const submissionId = `${cleanToken}_${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
-      try {
-        const subDoc = await getDoc(doc(db, 'submissions', submissionId));
-        if (subDoc.exists()) {
-          const subData = subDoc.data() as Submission;
-          if (subData.status && subData.status !== 'in_progress') {
-            try {
-              localStorage.setItem('exam_edu_active_screen', 'result');
-              localStorage.setItem('exam_edu_current_submission', JSON.stringify(subData));
-              localStorage.setItem('exam_edu_current_exam', JSON.stringify(match));
-              localStorage.setItem('exam_edu_student_name', cleanName);
-              localStorage.setItem('exam_edu_student_school', schoolName);
-              localStorage.setItem('exam_edu_student_grade', gradeName);
-              localStorage.setItem('exam_edu_exam_token', cleanToken);
-            } catch (e) {}
-            onStartExam(cleanName, schoolName, gradeName, cleanToken, match);
-            return;
-          }
+      if (match) {
+        if (!match.questions || match.questions.length === 0) {
+          setErrorMsg('Ujian ini belum memiliki soal. Harap hubungi pengawas.');
+          setLoading(false);
+          return;
         }
-      } catch (checkErr) {
-        console.warn('Check existing submission error:', checkErr);
+
+        // Check if student has already completed this exam
+        const submissionId = `${cleanToken}_${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+        try {
+          const subDoc = await getDoc(doc(db, 'submissions', submissionId));
+          if (subDoc.exists()) {
+            const subData = subDoc.data() as Submission;
+            if (subData.status && subData.status !== 'in_progress') {
+              try {
+                localStorage.setItem('exam_edu_active_screen', 'result');
+                localStorage.setItem('exam_edu_current_submission', JSON.stringify(subData));
+                localStorage.setItem('exam_edu_current_exam', JSON.stringify(match));
+                localStorage.setItem('exam_edu_student_name', cleanName);
+                localStorage.setItem('exam_edu_student_school', schoolName);
+                localStorage.setItem('exam_edu_student_grade', gradeName);
+                localStorage.setItem('exam_edu_exam_token', cleanToken);
+              } catch (e) {}
+              onStartExam(cleanName, schoolName, gradeName, cleanToken, match);
+              return;
+            }
+          }
+        } catch (checkErr) {
+          console.warn('Check existing submission error:', checkErr);
+        }
+
+        onStartExam(cleanName, schoolName, gradeName, cleanToken, match);
+        return;
       }
 
-      onStartExam(cleanName, schoolName, gradeName, cleanToken, match);
+      // 2. If not found in activeExams, check if it is an active Game Race Room (PIN 6-digit or exam token)
+      const gameRoomMatch = await findGameRoomByCode(cleanToken);
+
+      if (gameRoomMatch) {
+        if (!gameRoomMatch.questions || gameRoomMatch.questions.length === 0) {
+          setErrorMsg('Ruang Game Race ini belum memiliki soal balapan. Harap hubungi guru/pengawas.');
+          setLoading(false);
+          return;
+        }
+
+        if (gameRoomMatch.status === 'finished') {
+          setErrorMsg('Sesi Game Race untuk ruang ini sudah selesai bertanding.');
+          setLoading(false);
+          return;
+        }
+
+        // Join student into the Game Race room
+        const playerId = `p_${cleanName.replace(/[^A-Z0-9]/g, '_')}_${Date.now()}`;
+        const joinedPlayer = await joinGameRoom({
+          roomId: gameRoomMatch.id,
+          playerId,
+          name: cleanName,
+          school: schoolName,
+          grade: gradeName,
+        });
+
+        gameSound.playCarHorn();
+
+        if (onJoinGameRoom) {
+          onJoinGameRoom(gameRoomMatch, joinedPlayer);
+        } else if (onSwitchToGameMode) {
+          onSwitchToGameMode({
+            name: cleanName,
+            school: schoolName,
+            grade: gradeName,
+            pin: cleanToken,
+          });
+        }
+        return;
+      }
+
+      // 3. Neither exam nor active game room found
+      setErrorMsg('Token Ujian atau PIN Game Race tidak ditemukan atau sedang tidak aktif. Pastikan kode yang Anda masukkan benar.');
     } catch (err) {
       console.error(err);
-      setErrorMsg('Terjadi kesalahan saat memverifikasi token. Coba lagi.');
+      setErrorMsg('Terjadi kesalahan saat memverifikasi token: ' + ((err as Error)?.message || 'Coba lagi.'));
     } finally {
       setLoading(false);
     }
@@ -237,7 +287,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
           </button>
           <button
             type="button"
-            onClick={onSwitchToGameMode}
+            onClick={() => onSwitchToGameMode && onSwitchToGameMode({ name: studentName, school: schoolName, grade: gradeName, pin: token })}
             className="flex-1 py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center space-x-1.5 transition-all text-amber-300 hover:text-white hover:bg-white/10 cursor-pointer"
           >
             <span>🏎️</span>
@@ -291,9 +341,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
               <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 via-amber-400 to-emerald-500 text-slate-950 mb-3 shadow-[0_8px_20px_rgba(245,158,11,0.35)] border-b-2 border-amber-600">
                 <KeyRound className="w-7 h-7" />
               </div>
-              <h2 className="text-2xl font-black text-slate-900 font-heading">Token Ujian</h2>
+              <h2 className="text-2xl font-black text-slate-900 font-heading">Token / PIN Peserta</h2>
               <p className="text-xs text-slate-500 font-medium mt-1">
-                Masukkan token ujian yang diberikan oleh pengawas
+                Masukkan Token Ujian Online atau PIN 6-digit Game Race dari guru
               </p>
             </div>
           )}
@@ -447,8 +497,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
               </div>
 
               <div>
-                <label htmlFor="tokenInput" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Token Ujian
+                <label htmlFor="tokenInput" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                  <span>Token Ujian / PIN Game Race</span>
+                  <span className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full font-bold">
+                    Otomatis Terdeteksi
+                  </span>
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -459,12 +512,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
                     type="text"
                     required
                     autoFocus
-                    placeholder="Masukkan Token Ujian"
+                    placeholder="CONTOH: UJIAN-01 ATAU PIN 6 DIGIT"
                     value={token}
                     onChange={(e) => setToken(e.target.value.toUpperCase())}
                     className="w-full pl-10 pr-3.5 py-3 text-sm rounded-2xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 bg-slate-50/90 text-slate-900 font-mono font-black tracking-widest uppercase shadow-inner transition-all"
                   />
                 </div>
+                <p className="text-[11px] text-slate-500 mt-1.5 flex items-center space-x-1">
+                  <span>💡</span>
+                  <span>Mendukung Token Ujian Online maupun PIN 6-digit Game Race secara otomatis.</span>
+                </p>
               </div>
 
               <div className="flex items-center space-x-2.5 pt-1">
@@ -487,7 +544,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onStartExam, onOpenTea
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   ) : (
                     <>
-                      <span className="font-heading tracking-wide">Mulai Kerjakan Ujian</span>
+                      <span className="font-heading tracking-wide">
+                        {token.trim().length === 6 && /^\d+$/.test(token.trim())
+                          ? 'Masuk Game Race 🏎️'
+                          : 'Mulai Ujian / Game 🚀'}
+                      </span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}

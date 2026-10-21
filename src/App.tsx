@@ -7,6 +7,7 @@ import { SplashScreen } from './components/SplashScreen';
 import { AutoUpdateNotification } from './components/AutoUpdateNotification';
 import { GameManager } from './components/game/GameManager';
 import { Exam, Submission, GameRoom } from './types';
+import { GamePlayer } from './types/game';
 import { initializeSeedExams } from './lib/initialData';
 import { ensureAuth } from './lib/firebase';
 
@@ -71,9 +72,16 @@ export default function App() {
     } catch (e) { return null; }
   });
 
-  // Game Race Active Room and Host state
+  // Game Race Active Room, Player and Host state
   const [activeGameRoom, setActiveGameRoom] = useState<GameRoom | null>(null);
+  const [activeGamePlayer, setActiveGamePlayer] = useState<GamePlayer | null>(null);
   const [isGameHost, setIsGameHost] = useState<boolean>(false);
+  const [prefilledGameData, setPrefilledGameData] = useState<{
+    name?: string;
+    school?: string;
+    grade?: string;
+    pin?: string;
+  } | null>(null);
 
   // Initialize seed exams & Firebase Auth on app mount
   useEffect(() => {
@@ -126,6 +134,24 @@ export default function App() {
     } catch (e) {}
   };
 
+  const handleJoinGameRoomFromLogin = (room: GameRoom, player: GamePlayer) => {
+    setActiveGameRoom(room);
+    setActiveGamePlayer(player);
+    setIsGameHost(false);
+    setPrefilledGameData(null);
+    setScreen('game');
+  };
+
+  const handleSwitchToGameMode = (prefill?: { name?: string; school?: string; grade?: string; pin?: string }) => {
+    setActiveGameRoom(null);
+    setActiveGamePlayer(null);
+    setIsGameHost(false);
+    if (prefill) {
+      setPrefilledGameData(prefill);
+    }
+    setScreen('game');
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 font-sans antialiased">
       {/* Real-time System Auto-Update & Mobile Resume Sync */}
@@ -139,11 +165,8 @@ export default function App() {
         <LoginScreen
           onStartExam={handleStartExam}
           onOpenTeacherPanel={() => setScreen('teacher')}
-          onSwitchToGameMode={() => {
-            setActiveGameRoom(null);
-            setIsGameHost(false);
-            setScreen('game');
-          }}
+          onSwitchToGameMode={handleSwitchToGameMode}
+          onJoinGameRoom={handleJoinGameRoomFromLogin}
         />
       )}
 
@@ -171,7 +194,9 @@ export default function App() {
           onBackToStudentLogin={() => setScreen('login')}
           onLaunchGameRoom={(room) => {
             setActiveGameRoom(room);
+            setActiveGamePlayer(null);
             setIsGameHost(true);
+            setPrefilledGameData(null);
             setScreen('game');
           }}
         />
@@ -180,8 +205,13 @@ export default function App() {
       {screen === 'game' && (
         <GameManager
           initialRoom={activeGameRoom}
+          initialPlayer={activeGamePlayer}
+          prefilledData={prefilledGameData}
           isHost={isGameHost}
           onExitGame={() => {
+            setActiveGameRoom(null);
+            setActiveGamePlayer(null);
+            setPrefilledGameData(null);
             if (isGameHost) {
               setScreen('teacher');
             } else {

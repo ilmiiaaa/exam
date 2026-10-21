@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { GameRoom, GamePlayer } from '../../types/game';
-import { joinGameRoom } from '../../lib/gameService';
+import { joinGameRoom, getGameRoom } from '../../lib/gameService';
 import { SCHOOL_LIST, GRADE_LIST } from '../../data/schools';
 import { Car, KeyRound, User, ArrowRight, ArrowLeft, AlertCircle, Sparkles, Building, GraduationCap } from 'lucide-react';
 
@@ -10,6 +10,7 @@ interface GameModeEntryProps {
   initialName?: string;
   initialSchool?: string;
   initialGrade?: string;
+  initialPin?: string;
 }
 
 export const GameModeEntry: React.FC<GameModeEntryProps> = ({
@@ -18,11 +19,12 @@ export const GameModeEntry: React.FC<GameModeEntryProps> = ({
   initialName = '',
   initialSchool = '',
   initialGrade = '',
+  initialPin = '',
 }) => {
   const [studentName, setStudentName] = useState(initialName);
   const [schoolName, setSchoolName] = useState(initialSchool || SCHOOL_LIST[0]);
   const [gradeName, setGradeName] = useState(initialGrade || GRADE_LIST[3]);
-  const [pin, setPin] = useState('');
+  const [pin, setPin] = useState(initialPin || '');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -31,14 +33,14 @@ export const GameModeEntry: React.FC<GameModeEntryProps> = ({
     setErrorMsg('');
 
     const cleanName = studentName.trim().toUpperCase();
-    const cleanPin = pin.trim().replace(/\s+/g, '');
+    const cleanPin = pin.trim().replace(/\s+/g, '').toUpperCase();
 
     if (!cleanName) {
       setErrorMsg('Harap isi Nama Lengkap Anda.');
       return;
     }
-    if (!cleanPin || cleanPin.length < 5) {
-      setErrorMsg('Harap masukkan 6-digit PIN Ruang Game yang valid.');
+    if (!cleanPin || cleanPin.length < 3) {
+      setErrorMsg('Harap masukkan PIN Ruang Game atau Token Ujian yang valid.');
       return;
     }
 
@@ -53,33 +55,37 @@ export const GameModeEntry: React.FC<GameModeEntryProps> = ({
         grade: gradeName,
       });
 
-      // Construct minimal room data or fetch it
-      const dummyRoom: GameRoom = {
-        id: cleanPin,
-        title: 'Game Race',
-        examToken: '',
-        examTitle: '',
-        hostName: '',
-        status: 'waiting',
-        currentQuestionIndex: 0,
-        totalQuestions: 0,
-        questions: [],
-        playerCount: 1,
-        createdAt: new Date().toISOString(),
-        settings: {
-          questionTimeLimit: 20,
-          speedBonus: true,
-          streakMultiplier: true,
-          shuffleQuestions: false,
-          shuffleOptions: false,
-          theme: 'racing',
-        },
-      };
-
-      onJoinSuccess(dummyRoom, player);
+      // Fetch the real room document to ensure all settings and questions are loaded
+      const realRoom = await getGameRoom(player.roomId);
+      if (realRoom) {
+        onJoinSuccess(realRoom, player);
+      } else {
+        const fallbackRoom: GameRoom = {
+          id: player.roomId,
+          title: 'Game Race',
+          examToken: '',
+          examTitle: '',
+          hostName: '',
+          status: 'waiting',
+          currentQuestionIndex: 0,
+          totalQuestions: 0,
+          questions: [],
+          playerCount: 1,
+          createdAt: new Date().toISOString(),
+          settings: {
+            questionTimeLimit: 20,
+            speedBonus: true,
+            streakMultiplier: true,
+            shuffleQuestions: false,
+            shuffleOptions: false,
+            theme: 'racing',
+          },
+        };
+        onJoinSuccess(fallbackRoom, player);
+      }
     } catch (err) {
       console.error('Failed to join game room:', err);
-      setErrorMsg((err as Error).message || 'Gagal bergabung ke ruang game race. Periksa kembali PIN Anda.');
+      setErrorMsg((err as Error).message || 'Gagal bergabung ke ruang game race. Periksa kembali PIN atau Token Anda.');
     } finally {
       setLoading(false);
     }
@@ -186,17 +192,17 @@ export const GameModeEntry: React.FC<GameModeEntryProps> = ({
 
           <div>
             <label className="block text-xs font-bold text-amber-300 mb-1.5 flex items-center justify-between">
-              <span>PIN Ruang Game Race (6 Digit)</span>
+              <span>PIN Ruang (6 Digit) atau Token Ujian</span>
               <span className="text-[10px] text-slate-400 font-normal">Diberikan oleh Guru</span>
             </label>
             <div className="relative">
               <KeyRound className="w-4 h-4 text-amber-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                maxLength={6}
+                maxLength={16}
                 value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))}
-                placeholder="CONTOH: 829415"
+                onChange={(e) => setPin(e.target.value.replace(/[^A-Za-z0-9-]/g, '').toUpperCase())}
+                placeholder="CONTOH: 829415 ATAU TOKEN"
                 className="w-full pl-10 pr-4 py-3.5 rounded-2xl bg-slate-900 border-2 border-amber-400 text-amber-300 font-mono font-black text-xl tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-amber-400/30"
                 required
               />
