@@ -1,9 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GameRoom, GamePlayer } from '../../types/game';
-import { updateGameRoomStatus, finalizeGameResults } from '../../lib/gameService';
-import { Trophy, Flag, Users, ArrowLeft, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
+import { finalizeGameResults } from '../../lib/gameService';
+import {
+  Trophy,
+  Users,
+  ArrowLeft,
+  Sparkles,
+  CheckCircle2,
+  Volume2,
+  VolumeX,
+  Music,
+} from 'lucide-react';
 import { GameRaceTrack } from './GameRaceTrack';
 import { GameLeaderboard } from './GameLeaderboard';
+import { gameSound } from '../../lib/gameSound';
 
 interface GameHostScreenProps {
   room: GameRoom;
@@ -19,8 +29,41 @@ export const GameHostScreen: React.FC<GameHostScreenProps> = ({
   onExit,
 }) => {
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [isMuted, setIsMuted] = useState<boolean>(() => gameSound.getMuted());
+  const [isBgmOn, setIsBgmOn] = useState<boolean>(() => gameSound.isBgmActive());
+
+  const handleToggleSound = () => {
+    const next = gameSound.toggleMute();
+    setIsMuted(next);
+    if (next) {
+      setIsBgmOn(false);
+    }
+  };
+
+  const handleToggleBgm = () => {
+    const nextState = gameSound.toggleRaceBgm();
+    setIsBgmOn(nextState);
+  };
 
   const finishedCount = players.filter((p) => p.isFinished).length;
+  const prevFinishedCountRef = useRef<number>(finishedCount);
+
+  // Play fanfare when a player finishes their race
+  useEffect(() => {
+    if (finishedCount > prevFinishedCountRef.current) {
+      gameSound.playFinishFanfare();
+      setTimeout(() => gameSound.playCheer(), 400);
+    }
+    prevFinishedCountRef.current = finishedCount;
+  }, [finishedCount]);
+
+  // Clean up BGM on unmount
+  useEffect(() => {
+    return () => {
+      gameSound.stopRaceBgm();
+    };
+  }, []);
+
   const averageScore =
     players.length > 0
       ? Math.round(players.reduce((sum, p) => sum + (p.score || 0), 0) / players.length)
@@ -35,6 +78,9 @@ export const GameHostScreen: React.FC<GameHostScreenProps> = ({
 
     setIsFinalizing(true);
     try {
+      gameSound.stopRaceBgm();
+      gameSound.playFinishFanfare();
+      setTimeout(() => gameSound.playCheer(), 500);
       await finalizeGameResults(room.id);
       onFinishGame();
     } catch (err) {
@@ -51,7 +97,10 @@ export const GameHostScreen: React.FC<GameHostScreenProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-3xl border border-slate-200 shadow-md">
         <div className="flex items-center space-x-3">
           <button
-            onClick={onExit}
+            onClick={() => {
+              gameSound.stopRaceBgm();
+              onExit();
+            }}
             className="p-2 rounded-2xl border border-slate-200 hover:bg-slate-100 text-slate-600 transition-all cursor-pointer"
             title="Keluar ke Dashboard"
           >
@@ -73,15 +122,77 @@ export const GameHostScreen: React.FC<GameHostScreenProps> = ({
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center space-x-3">
+        {/* Action Controls & Classroom Soundboard */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Interactive Classroom Soundboard */}
+          <div className="flex items-center space-x-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => gameSound.playEngineRev()}
+              className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-amber-50 text-amber-700 font-bold text-xs flex items-center space-x-1 border border-amber-200 shadow-xs cursor-pointer active:scale-95 transition-all"
+              title="Bunyikan Raungan Mesin Balap"
+            >
+              <span>🏎️</span>
+              <span className="hidden md:inline">Gas</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => gameSound.playCarHorn()}
+              className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-xs flex items-center space-x-1 border border-indigo-200 shadow-xs cursor-pointer active:scale-95 transition-all"
+              title="Bunyikan Klakson Balap (Honk Honk!)"
+            >
+              <span>📢</span>
+              <span className="hidden md:inline">Klakson</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => gameSound.playCheer()}
+              className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-pink-50 text-pink-700 font-bold text-xs flex items-center space-x-1 border border-pink-200 shadow-xs cursor-pointer active:scale-95 transition-all"
+              title="Sorak & Tepuk Tangan Penonton Sirkuit"
+            >
+              <span>👏</span>
+              <span className="hidden md:inline">Sorak</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleToggleBgm}
+              className={`px-2.5 py-1.5 rounded-xl font-bold text-xs flex items-center space-x-1 border shadow-xs cursor-pointer active:scale-95 transition-all ${
+                isBgmOn
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-black animate-pulse'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+              }`}
+              title="Musik Latar Balapan Kuis (BGM)"
+            >
+              <Music className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">{isBgmOn ? 'BGM: ON' : 'BGM: OFF'}</span>
+            </button>
+          </div>
+
+          {/* Master Sound Mute Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleSound}
+            className={`p-2.5 rounded-2xl border transition-colors cursor-pointer ${
+              isMuted
+                ? 'bg-slate-100 border-slate-300 text-slate-400'
+                : 'bg-indigo-50 border-indigo-200 text-indigo-700'
+            }`}
+            title={isMuted ? 'Nyalakan Suara Kelas' : 'Matikan Suara'}
+          >
+            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+
+          {/* End & Show Podium */}
           <button
             onClick={handleEndGameAndPodium}
             disabled={isFinalizing}
-            className="px-5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm flex items-center space-x-2 shadow-lg shadow-amber-500/20 cursor-pointer active:scale-95 transition-all disabled:opacity-50"
+            className="px-4 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm flex items-center space-x-2 shadow-lg shadow-amber-500/20 cursor-pointer active:scale-95 transition-all disabled:opacity-50"
           >
             <Trophy className="w-4 h-4 text-slate-950" />
-            <span>{isFinalizing ? 'Menghitung Hasil...' : 'Selesaikan & Lihat Podium'}</span>
+            <span>{isFinalizing ? 'Menghitung...' : 'Selesaikan & Podium'}</span>
           </button>
         </div>
       </div>

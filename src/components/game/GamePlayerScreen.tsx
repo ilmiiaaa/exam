@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GameRoom, GamePlayer, GameQuestion } from '../../types/game';
 import { submitGameAnswer } from '../../lib/gameService';
-import { Flame, Clock, Trophy, CheckCircle2, XCircle, ArrowRight, Zap, Award } from 'lucide-react';
+import { Flame, Clock, Trophy, CheckCircle2, XCircle, ArrowRight, Zap, Award, Volume2, VolumeX } from 'lucide-react';
 import { GameRaceTrack } from './GameRaceTrack';
+import { gameSound } from '../../lib/gameSound';
 
 interface GamePlayerScreenProps {
   room: GameRoom;
@@ -17,6 +18,12 @@ export const GamePlayerScreen: React.FC<GamePlayerScreenProps> = ({
   allPlayers,
   onFinishGame,
 }) => {
+  const [isMuted, setIsMuted] = useState<boolean>(() => gameSound.getMuted());
+
+  const handleToggleSound = () => {
+    const next = gameSound.toggleMute();
+    setIsMuted(next);
+  };
   const currentQIndex = player.currentQuestionIndex || 0;
   const isFinished = player.isFinished || currentQIndex >= room.questions.length;
   const currentQuestion: GameQuestion | undefined = room.questions[currentQIndex];
@@ -36,7 +43,7 @@ export const GamePlayerScreen: React.FC<GamePlayerScreenProps> = ({
   const [timeLeft, setTimeLeft] = useState(timeLimit);
   const questionStartTimeRef = useRef<number>(Date.now());
 
-  // Reset timer on new question
+  // Reset timer & play cue on new question
   useEffect(() => {
     setTimeLeft(timeLimit);
     questionStartTimeRef.current = Date.now();
@@ -44,14 +51,21 @@ export const GamePlayerScreen: React.FC<GamePlayerScreenProps> = ({
     setShortAnswerText('');
     setFeedback(null);
     setIsSubmitting(false);
-  }, [currentQIndex, timeLimit]);
 
-  // Countdown timer ticker
+    if (!isFinished && currentQuestion) {
+      gameSound.playNewQuestion();
+    }
+  }, [currentQIndex, timeLimit, isFinished]);
+
+  // Countdown timer ticker with urgent ticking
   useEffect(() => {
     if (isFinished || !currentQuestion || feedback?.show) return;
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
+        if (prev <= 5 && prev > 1) {
+          gameSound.playUrgentTick();
+        }
         if (prev <= 1) {
           clearInterval(timer);
           handleTimeUp();
@@ -64,6 +78,17 @@ export const GamePlayerScreen: React.FC<GamePlayerScreenProps> = ({
     return () => clearInterval(timer);
   }, [currentQIndex, isFinished, feedback?.show]);
 
+  // Fanfare & crowd cheer when player completes race
+  useEffect(() => {
+    if (isFinished) {
+      gameSound.playFinishFanfare();
+      const cheerTimer = setTimeout(() => {
+        gameSound.playCheer();
+      }, 500);
+      return () => clearTimeout(cheerTimer);
+    }
+  }, [isFinished]);
+
   // Handle timeout (auto submit wrong answer)
   const handleTimeUp = async () => {
     if (isSubmitting || feedback?.show || !currentQuestion) return;
@@ -73,6 +98,7 @@ export const GamePlayerScreen: React.FC<GamePlayerScreenProps> = ({
   const handleSubmitAnswer = async (answerVal: any, isTimeout = false) => {
     if (isSubmitting || feedback?.show || !currentQuestion) return;
     setIsSubmitting(true);
+    gameSound.playClick();
 
     const timeSpentMs = Date.now() - questionStartTimeRef.current;
 
@@ -90,6 +116,16 @@ export const GamePlayerScreen: React.FC<GamePlayerScreenProps> = ({
         speedBonusEnabled: room.settings?.speedBonus,
         streakMultiplierEnabled: room.settings?.streakMultiplier,
       });
+
+      if (result.isCorrect) {
+        gameSound.playCorrect();
+        setTimeout(() => gameSound.playEngineRev(), 120);
+        if (result.newStreak >= 2) {
+          setTimeout(() => gameSound.playStreakBoost(), 320);
+        }
+      } else {
+        gameSound.playWrong();
+      }
 
       setFeedback({
         show: true,
@@ -168,7 +204,20 @@ export const GamePlayerScreen: React.FC<GamePlayerScreenProps> = ({
           )}
         </div>
 
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3">
+          <button
+            type="button"
+            onClick={handleToggleSound}
+            className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+              isMuted
+                ? 'bg-slate-100 border-slate-300 text-slate-400'
+                : 'bg-indigo-50 border-indigo-200 text-indigo-600'
+            }`}
+            title={isMuted ? 'Nyalakan Efek Suara' : 'Bisukan Suara'}
+          >
+            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4 animate-pulse" />}
+          </button>
+
           <div className="text-right">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Skor</span>
             <span className="text-lg font-black text-indigo-600">{player.score}</span>

@@ -1,14 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap, RotateCcw, Upload, FileSpreadsheet, FileText, UserCheck, UserPlus, Check, Filter, Info, ChevronRight, FileDown, Eye, EyeOff, Lock, Sliders, ToggleLeft, GitMerge, Type, ListChecks, Image as ImageIcon, Car, Trophy, Play, Flag } from 'lucide-react';
+import { Users, KeyRound, Plus, Trash2, CheckCircle2, Clock, ArrowLeft, RefreshCw, Sparkles, BookOpen, Search, AlertCircle, Edit3, X, Save, ShieldCheck, Download, Building, GraduationCap, RotateCcw, Upload, FileSpreadsheet, FileText, UserCheck, UserPlus, Check, Filter, Info, ChevronRight, FileDown, Eye, EyeOff, Lock, Sliders, ToggleLeft, GitMerge, Type, ListChecks, Image as ImageIcon, Car, Trophy, Play, Flag, Volume2, VolumeX, Settings, Zap, Music, AlertTriangle, Copy } from 'lucide-react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 import { db } from '../lib/firebase';
-import { Exam, Submission, Question, QuestionType, RegisteredStudent, ParticipantSystemMode, GameRoom } from '../types';
+import { Exam, Submission, Question, QuestionType, RegisteredStudent, ParticipantSystemMode, GameRoom, GameRoomStatus, GamePlayer, GameQuestion } from '../types';
 import { initializeSeedExams } from '../lib/initialData';
 import { SCHOOL_LIST, GRADE_LIST } from '../data/schools';
 import { broadcastSystemUpdate } from '../lib/appUpdateManager';
 import { QUESTION_TYPES, downloadQuestionTemplate, parseQuestionsFromWorkbook, isQuestionTypeKeyword } from '../lib/questionTemplates';
-import { createGameRoom, listenToActiveGameRooms } from '../lib/gameService';
+import {
+  createGameRoom,
+  listenToActiveGameRooms,
+  updateGameRoom,
+  resetGameRoom,
+  deleteGameRoom,
+  bulkDeleteFinishedRooms,
+  duplicateGameRoom,
+  listenToGamePlayers,
+  kickPlayerFromRoom,
+} from '../lib/gameService';
+import { gameSound } from '../lib/gameSound';
 
 interface TeacherDashboardProps {
   onBackToStudentLogin: () => void;
@@ -77,11 +88,56 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
     return () => clearInterval(timer);
   }, []);
 
-  // Game Race Management State
+  // Game Race Management & CRUD State
   const [activeGameRooms, setActiveGameRooms] = useState<GameRoom[]>([]);
   const [selectedRaceExamId, setSelectedRaceExamId] = useState<string>('');
+  const [customRaceTitle, setCustomRaceTitle] = useState<string>('');
   const [raceTimeLimit, setRaceTimeLimit] = useState<number>(20);
+  const [raceSpeedBonus, setRaceSpeedBonus] = useState<boolean>(true);
+  const [raceStreakBonus, setRaceStreakBonus] = useState<boolean>(true);
+  const [raceTheme, setRaceTheme] = useState<'racing' | 'space' | 'safari'>('racing');
   const [isCreatingRace, setIsCreatingRace] = useState<boolean>(false);
+
+  // Search & Status Filter for Game Rooms
+  const [raceSearchQuery, setRaceSearchQuery] = useState<string>('');
+  const [raceStatusFilter, setRaceStatusFilter] = useState<'ALL' | 'waiting' | 'in_progress' | 'finished'>('ALL');
+
+  // Edit Room Modal State
+  const [editingRoom, setEditingRoom] = useState<GameRoom | null>(null);
+  const [editRoomTitle, setEditRoomTitle] = useState<string>('');
+  const [editRoomTimeLimit, setEditRoomTimeLimit] = useState<number>(20);
+  const [editRoomSpeedBonus, setEditRoomSpeedBonus] = useState<boolean>(true);
+  const [editRoomStreakBonus, setEditRoomStreakBonus] = useState<boolean>(true);
+  const [editRoomTheme, setEditRoomTheme] = useState<'racing' | 'space' | 'safari'>('racing');
+  const [editRoomStatus, setEditRoomStatus] = useState<GameRoomStatus>('waiting');
+  const [isUpdatingRoom, setIsUpdatingRoom] = useState<boolean>(false);
+
+  // Preview Room Detail Modal State
+  const [previewingRoom, setPreviewingRoom] = useState<GameRoom | null>(null);
+  const [previewTab, setPreviewTab] = useState<'questions' | 'players' | 'settings'>('questions');
+  const [previewPlayers, setPreviewPlayers] = useState<GamePlayer[]>([]);
+  const [isDuplicatingRoom, setIsDuplicatingRoom] = useState<boolean>(false);
+
+  // Edit Room Questions & Sub-tabs State
+  const [editRoomQuestions, setEditRoomQuestions] = useState<GameQuestion[]>([]);
+  const [editRoomActiveSubTab, setEditRoomActiveSubTab] = useState<'settings' | 'questions'>('settings');
+  const [editingQuestionIndex, setEditingQuestionIndex] = useState<number | null>(null);
+
+  // Delete Room Modal State
+  const [deletingRoom, setDeletingRoom] = useState<GameRoom | null>(null);
+  const [isDeletingRoom, setIsDeletingRoom] = useState<boolean>(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
+
+  // Audio mute state
+  const [isSoundMuted, setIsSoundMuted] = useState<boolean>(() => gameSound.getMuted());
+
+  const handleToggleSound = () => {
+    const next = gameSound.toggleMute();
+    setIsSoundMuted(next);
+    if (!next) {
+      gameSound.playCountdown(true);
+    }
+  };
 
   useEffect(() => {
     const unsub = listenToActiveGameRooms((rooms) => {
@@ -89,6 +145,18 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
     });
     return () => unsub();
   }, []);
+
+  // Listen to players inside the previewed room
+  useEffect(() => {
+    if (!previewingRoom) {
+      setPreviewPlayers([]);
+      return;
+    }
+    const unsub = listenToGamePlayers(previewingRoom.id, (players) => {
+      setPreviewPlayers(players);
+    });
+    return () => unsub();
+  }, [previewingRoom]);
 
   const handleCreateGameRoom = async (targetExam?: Exam) => {
     const examToUse = targetExam || exams.find((e) => e.id === selectedRaceExamId) || exams[0];
@@ -98,13 +166,17 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
     }
     setIsCreatingRace(true);
     try {
+      gameSound.playClick();
       const room = await createGameRoom({
         exam: examToUse,
         hostName: 'Guru Pengawas',
+        title: customRaceTitle.trim() || undefined,
         questionTimeLimit: raceTimeLimit,
-        speedBonus: true,
-        streakMultiplier: true,
+        speedBonus: raceSpeedBonus,
+        streakMultiplier: raceStreakBonus,
+        theme: raceTheme,
       });
+      setCustomRaceTitle('');
       if (onLaunchGameRoom) {
         onLaunchGameRoom(room);
       } else {
@@ -115,6 +187,165 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
       alert('Gagal membuat ruang Game Race: ' + (err as Error).message);
     } finally {
       setIsCreatingRace(false);
+    }
+  };
+
+  // Open Edit Room Modal with full question copy
+  const handleStartEditRoom = (room: GameRoom) => {
+    setEditingRoom(room);
+    setEditRoomTitle(room.title);
+    setEditRoomTimeLimit(room.settings?.questionTimeLimit || 20);
+    setEditRoomSpeedBonus(room.settings?.speedBonus ?? true);
+    setEditRoomStreakBonus(room.settings?.streakMultiplier ?? true);
+    setEditRoomTheme(room.settings?.theme || 'racing');
+    setEditRoomStatus(room.status);
+    setEditRoomQuestions(JSON.parse(JSON.stringify(room.questions || [])));
+    setEditRoomActiveSubTab('settings');
+    setEditingQuestionIndex(null);
+    gameSound.playClick();
+  };
+
+  // Duplicate / Clone Room
+  const handleDuplicateRoom = async (room: GameRoom) => {
+    setIsDuplicatingRoom(true);
+    try {
+      gameSound.playClick();
+      const cloned = await duplicateGameRoom(room.id, 'Guru Pengawas');
+      alert(`Ruang balapan berhasil diduplikasi! PIN baru: ${cloned.id}`);
+    } catch (err) {
+      alert('Gagal menduplikasi ruang: ' + (err as Error).message);
+    } finally {
+      setIsDuplicatingRoom(false);
+    }
+  };
+
+  // Kick player from preview modal
+  const handleKickPlayerInPreview = async (playerId: string, playerName: string) => {
+    if (!previewingRoom) return;
+    const confirmKick = window.confirm(`Keluarkan "${playerName}" dari ruang PIN ${previewingRoom.id}?`);
+    if (!confirmKick) return;
+    try {
+      gameSound.playClick();
+      await kickPlayerFromRoom(previewingRoom.id, playerId);
+    } catch (err) {
+      alert('Gagal mengeluarkan peserta: ' + (err as Error).message);
+    }
+  };
+
+  // Add question to edit room
+  const handleAddQuestionToEditRoom = () => {
+    gameSound.playClick();
+    const newQ: GameQuestion = {
+      id: `gq_${Date.now()}`,
+      originalQuestionId: `custom_${Date.now()}`,
+      type: 'multiple_choice',
+      question: 'Pertanyaan balapan baru...',
+      options: ['Pilihan A', 'Pilihan B', 'Pilihan C', 'Pilihan D'],
+      correctAnswerIndex: 0,
+      points: 100,
+      timeLimitSeconds: editRoomTimeLimit || 20,
+    };
+    const nextList = [...editRoomQuestions, newQ];
+    setEditRoomQuestions(nextList);
+    setEditingQuestionIndex(nextList.length - 1);
+  };
+
+  // Delete question from edit room
+  const handleDeleteQuestionFromEditRoom = (index: number) => {
+    if (editRoomQuestions.length <= 1) {
+      alert('Ruang balapan harus memiliki minimal 1 butir soal!');
+      return;
+    }
+    gameSound.playClick();
+    const filtered = editRoomQuestions.filter((_, idx) => idx !== index);
+    setEditRoomQuestions(filtered);
+    if (editingQuestionIndex === index) setEditingQuestionIndex(null);
+  };
+
+  // Save Edit Room (Updates settings & questions)
+  const handleSaveEditRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRoom) return;
+    if (editRoomQuestions.length === 0) {
+      alert('Ruang balapan harus memiliki minimal 1 butir soal!');
+      return;
+    }
+    setIsUpdatingRoom(true);
+    try {
+      gameSound.playClick();
+      await updateGameRoom(editingRoom.id, {
+        title: editRoomTitle.trim() || editingRoom.title,
+        status: editRoomStatus,
+        totalQuestions: editRoomQuestions.length,
+        questions: editRoomQuestions,
+        settings: {
+          ...editingRoom.settings,
+          questionTimeLimit: editRoomTimeLimit,
+          speedBonus: editRoomSpeedBonus,
+          streakMultiplier: editRoomStreakBonus,
+          theme: editRoomTheme,
+        },
+      });
+      setEditingRoom(null);
+    } catch (err) {
+      alert('Gagal memperbarui ruang game: ' + (err as Error).message);
+    } finally {
+      setIsUpdatingRoom(false);
+    }
+  };
+
+  // Reset Room (Replay race)
+  const handleResetRoom = async (room: GameRoom) => {
+    const confirmReset = window.confirm(
+      `Apakah Anda ingin mereset ruang "${room.title}" (PIN: ${room.id})?\n\nSemua skor dan progres peserta akan di-reset ke 0 dan status kembali ke "Menunggu Peserta" sehingga kelas dapat bertanding ulang tanpa ganti PIN.`
+    );
+    if (!confirmReset) return;
+
+    try {
+      gameSound.playClick();
+      await resetGameRoom(room.id);
+      alert(`Ruang PIN ${room.id} berhasil di-reset untuk pertandingan ulang!`);
+    } catch (err) {
+      alert('Gagal mereset ruang game: ' + (err as Error).message);
+    }
+  };
+
+  // Delete Room
+  const handleConfirmDeleteRoom = async () => {
+    if (!deletingRoom) return;
+    setIsDeletingRoom(true);
+    try {
+      gameSound.playClick();
+      await deleteGameRoom(deletingRoom.id);
+      setDeletingRoom(null);
+    } catch (err) {
+      alert('Gagal menghapus ruang game: ' + (err as Error).message);
+    } finally {
+      setIsDeletingRoom(false);
+    }
+  };
+
+  // Bulk Delete Finished Rooms
+  const handleBulkDeleteFinished = async () => {
+    const finishedCount = activeGameRooms.filter((r) => r.status === 'finished').length;
+    if (finishedCount === 0) {
+      alert('Tidak ada ruang balapan berstatus selesai untuk dibersihkan.');
+      return;
+    }
+    const confirmBulk = window.confirm(
+      `Apakah Anda yakin ingin menghapus ${finishedCount} ruang balapan yang sudah selesai? Data riwayat dan peserta dari ruang tersebut akan dibersihkan.`
+    );
+    if (!confirmBulk) return;
+
+    setIsBulkDeleting(true);
+    try {
+      gameSound.playClick();
+      const count = await bulkDeleteFinishedRooms();
+      alert(`Berhasil membersihkan ${count} ruang balapan yang selesai.`);
+    } catch (err) {
+      alert('Gagal membersihkan ruang: ' + (err as Error).message);
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -3403,16 +3634,47 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
             {/* Header Hero Card */}
             <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-700 rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
               <div className="relative z-10 space-y-3">
-                <div className="inline-flex items-center space-x-2 bg-white/20 backdrop-blur-md px-3.5 py-1 rounded-full text-xs font-black uppercase tracking-wider text-amber-100 border border-white/20">
-                  <Car className="w-3.5 h-3.5 text-amber-300" />
-                  <span>Fitur Pembelajaran Interaktif Baru</span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="inline-flex items-center space-x-2 bg-white/20 backdrop-blur-md px-3.5 py-1 rounded-full text-xs font-black uppercase tracking-wider text-amber-100 border border-white/20">
+                    <Car className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Fitur Pembelajaran Interaktif & Balapan Kuis</span>
+                  </div>
+
+                  {/* Sound Effect Controls */}
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={handleToggleSound}
+                      className={`px-3 py-1.5 rounded-full text-xs font-black flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer ${
+                        isSoundMuted
+                          ? 'bg-black/30 hover:bg-black/40 text-slate-300 border border-white/10'
+                          : 'bg-emerald-500/90 hover:bg-emerald-500 text-white border border-emerald-300 shadow-emerald-500/20'
+                      }`}
+                      title="Nyalakan atau Bisukan Seluruh Suara Game"
+                    >
+                      {isSoundMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 animate-pulse" />}
+                      <span>{isSoundMuted ? 'Suara: NONAKTIF' : 'Suara: AKTIF'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => gameSound.playFinishFanfare()}
+                      className="px-3 py-1.5 rounded-full text-xs font-black bg-white/20 hover:bg-white/30 text-white border border-white/20 flex items-center space-x-1 transition-all cursor-pointer shadow-xs active:scale-95"
+                      title="Uji coba speaker kelas"
+                    >
+                      <Music className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Tes Speaker 🎵</span>
+                    </button>
+                  </div>
                 </div>
+
                 <h2 className="text-2xl sm:text-3xl font-black tracking-tight">
                   Arena Game Race Edukasi 🏎️💨
                 </h2>
                 <p className="text-amber-100 text-xs sm:text-sm font-medium max-w-2xl leading-relaxed">
                   Ubah paket soal ujian menjadi kompetisi balapan kuis interaktif yang seru. Siswa berlomba menjawab soal dengan cepat dan tepat di perangkat masing-masing, sementara Guru dapat memproyeksikan sirkuit balap langsung ke layar proyektor kelas!
                 </p>
+
                 <div className="flex flex-wrap items-center gap-3 pt-2 text-xs font-bold text-amber-100">
                   <span className="flex items-center space-x-1.5 bg-black/20 px-3 py-1.5 rounded-xl border border-white/10">
                     <Flag className="w-4 h-4 text-emerald-300" />
@@ -3424,35 +3686,66 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                   </span>
                   <span className="flex items-center space-x-1.5 bg-black/20 px-3 py-1.5 rounded-xl border border-white/10">
                     <Sparkles className="w-4 h-4 text-pink-300" />
-                    <span>Dukungan 5 Model Soal Ujian</span>
+                    <span>Efek Suara Sintesis Bawaan</span>
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Quick Create Game Room Card */}
+            {/* CREATE SECTION: Formulir Buat Ruang Balapan Baru */}
             <div className="card-3d p-6 bg-white border-2 border-slate-200 space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div className="flex items-center space-x-2.5">
                   <div className="w-9 h-9 rounded-2xl bg-amber-100 flex items-center justify-center text-amber-600">
-                    <Car className="w-5 h-5" />
+                    <Plus className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-black text-slate-800 text-base">Buat Ruang Balapan Baru</h3>
-                    <p className="text-xs text-slate-500 font-medium">Pilih paket soal ujian untuk dijadikan materi game race</p>
+                    <h3 className="font-black text-slate-800 text-base">Buat Ruang Balapan Baru (Create Room)</h3>
+                    <p className="text-xs text-slate-500 font-medium">Atur judul ruang, materi soal, durasi per soal, dan bonus balapan</p>
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
-                <div className="sm:col-span-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Custom Title Input */}
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-black text-slate-700 mb-1.5">
+                    Judul Ruang Balapan (Opsional):
+                  </label>
+                  <input
+                    type="text"
+                    value={customRaceTitle}
+                    onChange={(e) => setCustomRaceTitle(e.target.value)}
+                    placeholder="Contoh: Kuis Cerdas Cermat Kelas 6A (default otomatis)"
+                    className="w-full px-3.5 py-2.5 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+
+                {/* Theme Selector */}
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1.5">
+                    Tema Sirkuit:
+                  </label>
+                  <select
+                    value={raceTheme}
+                    onChange={(e) => setRaceTheme(e.target.value as any)}
+                    className="w-full px-3.5 py-2.5 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs focus:border-amber-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="racing">🏎️ Balap Mobil GP</option>
+                    <option value="space">🚀 Roket Turbo Angkasa</option>
+                    <option value="safari">🦁 Safari Rimba Hewan</option>
+                  </select>
+                </div>
+
+                {/* Exam Package Selector */}
+                <div className="md:col-span-2">
                   <label className="block text-xs font-black text-slate-700 mb-1.5">
                     Pilih Paket Soal Ujian:
                   </label>
                   <select
                     value={selectedRaceExamId || (exams[0]?.id || '')}
                     onChange={(e) => setSelectedRaceExamId(e.target.value)}
-                    className="w-full px-3.5 py-3 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs focus:border-amber-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs focus:border-amber-500 focus:outline-none cursor-pointer"
                   >
                     {exams.map((ex) => (
                       <option key={ex.id} value={ex.id}>
@@ -3462,6 +3755,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                   </select>
                 </div>
 
+                {/* Time Limit Selector */}
                 <div>
                   <label className="block text-xs font-black text-slate-700 mb-1.5">
                     Waktu per Soal:
@@ -3469,15 +3763,39 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                   <select
                     value={raceTimeLimit}
                     onChange={(e) => setRaceTimeLimit(Number(e.target.value))}
-                    className="w-full px-3.5 py-3 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs focus:border-amber-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs focus:border-amber-500 focus:outline-none cursor-pointer"
                   >
                     <option value={10}>10 Detik (Sangat Cepat)</option>
                     <option value={15}>15 Detik (Cepat)</option>
                     <option value={20}>20 Detik (Standar)</option>
                     <option value={30}>30 Detik (Santai)</option>
                     <option value={45}>45 Detik (Analitis)</option>
+                    <option value={60}>60 Detik (Lengkap)</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Bonus Options */}
+              <div className="flex flex-wrap items-center gap-6 pt-1 text-xs font-bold text-slate-700 border-t border-slate-100">
+                <label className="flex items-center space-x-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={raceSpeedBonus}
+                    onChange={(e) => setRaceSpeedBonus(e.target.checked)}
+                    className="w-4 h-4 text-indigo-600 rounded-md border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span>Bonus Kecepatan (Poin lebih tinggi untuk jawaban lebih cepat)</span>
+                </label>
+
+                <label className="flex items-center space-x-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={raceStreakBonus}
+                    onChange={(e) => setRaceStreakBonus(e.target.checked)}
+                    className="w-4 h-4 text-orange-600 rounded-md border-slate-300 focus:ring-orange-500 cursor-pointer"
+                  />
+                  <span>Pengganda Streak (Bonus poin beruntun)</span>
+                </label>
               </div>
 
               <div className="pt-2 flex justify-end">
@@ -3485,7 +3803,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
                   type="button"
                   onClick={() => handleCreateGameRoom()}
                   disabled={isCreatingRace || exams.length === 0}
-                  className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs sm:text-sm flex items-center space-x-2 shadow-lg shadow-amber-500/20 cursor-pointer active:scale-95 transition-all disabled:opacity-50"
+                  className="px-6 py-3 rounded-2xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs sm:text-sm flex items-center space-x-2 shadow-lg shadow-amber-500/20 cursor-pointer active:scale-95 transition-all disabled:opacity-50"
                 >
                   <Play className="w-4 h-4 fill-current" />
                   <span>{isCreatingRace ? 'Menyiapkan Sirkuit...' : 'Buat & Buka Sirkuit Game Race 🚀'}</span>
@@ -3493,98 +3811,861 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onBackToStud
               </div>
             </div>
 
-            {/* List of Game Rooms */}
+            {/* READ, UPDATE, DELETE SECTION: Filter & Daftar Ruang Game Race */}
             <div className="card-3d p-6 bg-white border-2 border-slate-200 space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
                 <div className="flex items-center space-x-2.5">
                   <div className="w-9 h-9 rounded-2xl bg-indigo-100 flex items-center justify-center text-indigo-600">
                     <Flag className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-black text-slate-800 text-base">Daftar Ruang Game Race ({activeGameRooms.length})</h3>
-                    <p className="text-xs text-slate-500 font-medium">Ruang permainan aktif dan riwayat balapan terbaru</p>
+                    <h3 className="font-black text-slate-800 text-base">
+                      Manajemen Ruang Game Race ({activeGameRooms.length})
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Kelola ruang aktif, edit konfigurasi, reset balapan ulang, atau hapus ruang lama
+                    </p>
                   </div>
+                </div>
+
+                {/* Bulk clean finished rooms */}
+                {activeGameRooms.some((r) => r.status === 'finished') && (
+                  <button
+                    type="button"
+                    onClick={handleBulkDeleteFinished}
+                    disabled={isBulkDeleting}
+                    className="px-3 py-1.5 rounded-xl border border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 font-bold text-xs flex items-center space-x-1.5 transition-all cursor-pointer self-start sm:self-auto disabled:opacity-50"
+                    title="Hapus semua ruang yang statusnya sudah Selesai"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{isBulkDeleting ? 'Membersihkan...' : 'Bersihkan Ruang Selesai'}</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Filter & Search Bar */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Search by PIN or Title */}
+                <div className="sm:col-span-2 relative">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={raceSearchQuery}
+                    onChange={(e) => setRaceSearchQuery(e.target.value)}
+                    placeholder="Cari berdasarkan PIN atau judul ruang..."
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border-2 border-slate-200 text-xs font-bold focus:outline-none focus:border-amber-500"
+                  />
+                  {raceSearchQuery && (
+                    <button
+                      onClick={() => setRaceSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Status Filter */}
+                <div>
+                  <select
+                    value={raceStatusFilter}
+                    onChange={(e) => setRaceStatusFilter(e.target.value as any)}
+                    className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border-2 border-slate-200 text-xs font-bold focus:outline-none focus:border-amber-500 cursor-pointer"
+                  >
+                    <option value="ALL">Semua Status Ruang</option>
+                    <option value="waiting">Menunggu Peserta</option>
+                    <option value="in_progress">Sedang Melaju</option>
+                    <option value="finished">Selesai</option>
+                  </select>
                 </div>
               </div>
 
-              {activeGameRooms.length === 0 ? (
-                <div className="py-12 text-center text-slate-400 space-y-2">
-                  <p className="text-4xl">🏎️</p>
-                  <p className="font-bold text-slate-700">Belum ada ruang Game Race yang dibuat</p>
-                  <p className="text-xs text-slate-400">
-                    Pilih paket soal di atas dan klik <strong>Buat & Buka Sirkuit Game Race</strong> untuk memulai.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {activeGameRooms.map((room) => {
-                    const isWaiting = room.status === 'waiting';
-                    const isInProgress = room.status === 'in_progress';
-                    const isFinished = room.status === 'finished';
+              {/* Room Cards Grid */}
+              {(() => {
+                const filtered = activeGameRooms.filter((room) => {
+                  if (raceStatusFilter !== 'ALL' && room.status !== raceStatusFilter) return false;
+                  if (!raceSearchQuery.trim()) return true;
+                  const q = raceSearchQuery.toLowerCase();
+                  return (
+                    room.id.toLowerCase().includes(q) ||
+                    room.title.toLowerCase().includes(q) ||
+                    room.examTitle.toLowerCase().includes(q) ||
+                    room.examToken.toLowerCase().includes(q)
+                  );
+                });
 
-                    return (
-                      <div
-                        key={room.id}
-                        className="p-5 rounded-2xl border-2 border-slate-200 hover:border-amber-400/80 bg-slate-50/50 hover:bg-white transition-all space-y-3 shadow-xs"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <span className="font-mono text-xl font-black text-amber-600 tracking-wider">
-                              PIN: {room.id}
+                if (filtered.length === 0) {
+                  return (
+                    <div className="py-12 text-center text-slate-400 space-y-2">
+                      <p className="text-4xl">🏎️</p>
+                      <p className="font-bold text-slate-700">
+                        {activeGameRooms.length === 0
+                          ? 'Belum ada ruang Game Race yang dibuat'
+                          : 'Tidak ada ruang yang sesuai dengan filter pencarian'}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        {activeGameRooms.length === 0
+                          ? 'Pilih paket soal di atas dan klik Buat & Buka Sirkuit Game Race untuk memulai.'
+                          : 'Coba ubah kata kunci pencarian atau ganti filter status.'}
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {filtered.map((room) => {
+                      const isWaiting = room.status === 'waiting';
+                      const isInProgress = room.status === 'in_progress';
+                      const isFinished = room.status === 'finished';
+
+                      return (
+                        <div
+                          key={room.id}
+                          className="p-5 rounded-2xl border-2 border-slate-200 hover:border-amber-400/80 bg-slate-50/50 hover:bg-white transition-all space-y-3 shadow-xs"
+                        >
+                          {/* Card Top: PIN, Title, Status */}
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <div className="flex items-center space-x-2">
+                                <span className="font-mono text-xl font-black text-amber-600 tracking-wider">
+                                  PIN: {room.id}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    gameSound.playClick();
+                                    navigator.clipboard.writeText(room.id);
+                                    alert(`PIN ${room.id} berhasil disalin!`);
+                                  }}
+                                  title="Salin PIN Ruang"
+                                  className="p-1 rounded-lg hover:bg-amber-100 text-amber-700 transition-colors cursor-pointer"
+                                >
+                                  <KeyRound className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                              <h4 className="font-black text-sm text-slate-800 mt-0.5 line-clamp-1">
+                                {room.title}
+                              </h4>
+                              <p className="text-xs text-slate-400">
+                                Paket: <strong>{room.examTitle}</strong> ({room.totalQuestions} Soal)
+                              </p>
+                            </div>
+
+                            <span
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                isWaiting
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                  : isInProgress
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse'
+                                  : 'bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              {isWaiting ? 'Menunggu Peserta' : isInProgress ? 'Sedang Melaju' : 'Selesai'}
                             </span>
-                            <h4 className="font-black text-sm text-slate-800 mt-0.5 line-clamp-1">
-                              {room.title}
-                            </h4>
-                            <p className="text-xs text-slate-400">
-                              Paket: {room.examTitle} ({room.totalQuestions} Soal)
-                            </p>
                           </div>
 
-                          <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                              isWaiting
-                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                                : isInProgress
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse'
-                                : 'bg-slate-200 text-slate-700'
-                            }`}
-                          >
-                            {isWaiting ? 'Menunggu Peserta' : isInProgress ? 'Sedang Melaju' : 'Selesai'}
-                          </span>
-                        </div>
+                          {/* Chips: Settings */}
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold text-slate-600 pt-1">
+                            <span className="bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 flex items-center space-x-1">
+                              <Clock className="w-3 h-3 text-slate-500" />
+                              <span>{room.settings?.questionTimeLimit || 20}s / soal</span>
+                            </span>
+                            {room.settings?.speedBonus && (
+                              <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md border border-indigo-200">
+                                Speed Bonus
+                              </span>
+                            )}
+                            {room.settings?.streakMultiplier && (
+                              <span className="bg-orange-50 text-orange-700 px-2 py-0.5 rounded-md border border-orange-200">
+                                Streak Multiplier
+                              </span>
+                            )}
+                            <span className="bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
+                              Tema: {room.settings?.theme === 'space' ? '🚀 Angkasa' : room.settings?.theme === 'safari' ? '🦁 Safari' : '🏎️ Balap GP'}
+                            </span>
+                          </div>
 
-                        <div className="flex items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-200/60 font-bold">
-                          <span>{room.playerCount || 0} Pembalap Terhubung</span>
-                          <span>{new Date(room.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
+                          {/* Info Footer */}
+                          <div className="flex items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-200/60 font-bold">
+                            <span>{room.playerCount || 0} Pembalap Terhubung</span>
+                            <span>{new Date(room.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
 
-                        <div className="pt-1 flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => onLaunchGameRoom && onLaunchGameRoom(room)}
-                            className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center space-x-1.5 shadow-md cursor-pointer transition-all active:scale-95"
-                          >
-                            <Play className="w-3.5 h-3.5 fill-current" />
-                            <span>{isFinished ? 'Lihat Hasil Balapan' : 'Buka Ruang (Host)'}</span>
-                          </button>
+                          {/* CRUD Action Buttons */}
+                          <div className="pt-1 flex flex-wrap items-center gap-1.5">
+                            {/* Host Open Button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                gameSound.playClick();
+                                if (onLaunchGameRoom) onLaunchGameRoom(room);
+                              }}
+                              className="flex-1 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center space-x-1.5 shadow-md cursor-pointer transition-all active:scale-95"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" />
+                              <span>{isFinished ? 'Lihat Podium' : 'Buka (Host)'}</span>
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(room.id);
-                              alert(`PIN ${room.id} berhasil disalin!`);
-                            }}
-                            title="Salin PIN Ruang"
-                            className="p-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
-                          >
-                            <KeyRound className="w-4 h-4" />
-                          </button>
+                            {/* Preview Questions & Details */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                gameSound.playClick();
+                                setPreviewingRoom(room);
+                              }}
+                              title="Lihat Detail & Pratinjau Soal"
+                              className="p-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Edit Room */}
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditRoom(room)}
+                              title="Edit Konfigurasi Ruang"
+                              className="p-2 rounded-xl bg-white hover:bg-amber-50 text-amber-700 border border-amber-300 transition-colors cursor-pointer"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Duplicate / Clone Room */}
+                            <button
+                              type="button"
+                              onClick={() => handleDuplicateRoom(room)}
+                              disabled={isDuplicatingRoom}
+                              title="Duplikat Ruang (Buat PIN Baru dengan Soal yang Sama)"
+                              className="p-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Reset / Replay Room */}
+                            <button
+                              type="button"
+                              onClick={() => handleResetRoom(room)}
+                              title="Reset Balapan (Main Ulang Kelas)"
+                              className="p-2 rounded-xl bg-white hover:bg-purple-50 text-purple-700 border border-purple-300 transition-colors cursor-pointer"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Delete Room */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                gameSound.playClick();
+                                setDeletingRoom(room);
+                              }}
+                              title="Hapus Ruang Game"
+                              className="p-2 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 1: EDIT GAME ROOM & QUESTIONS (UPDATE) */}
+        {editingRoom && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="card-3d max-w-3xl w-full p-6 space-y-4 max-h-[90vh] flex flex-col bg-white">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
+                <div className="flex items-center space-x-2">
+                  <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600">
+                    <Edit3 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900">
+                      Edit Ruang Game Race (PIN: {editingRoom.id})
+                    </h3>
+                    <p className="text-xs text-slate-400 font-medium">
+                      Atur konfigurasi sirkuit atau modifikasi butir soal di ruang ini
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setEditingRoom(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Sub-tab navigation */}
+              <div className="flex items-center space-x-2 border-b border-slate-100 pb-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setEditRoomActiveSubTab('settings')}
+                  className={`px-4 py-2 rounded-xl font-black text-xs flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    editRoomActiveSubTab === 'settings'
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>Pengaturan Sirkuit</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditRoomActiveSubTab('questions')}
+                  className={`px-4 py-2 rounded-xl font-black text-xs flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    editRoomActiveSubTab === 'questions'
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Kelola Soal Ruang ({editRoomQuestions.length})</span>
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveEditRoom} className="flex-1 flex flex-col overflow-hidden space-y-4">
+                {/* SUB-TAB 1: SETTINGS */}
+                {editRoomActiveSubTab === 'settings' && (
+                  <div className="overflow-y-auto space-y-4 pr-1 flex-1 text-xs">
+                    <div>
+                      <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-1">
+                        Judul Ruang Balapan
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={editRoomTitle}
+                        onChange={(e) => setEditRoomTitle(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border-2 border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-1">
+                          Waktu per Soal
+                        </label>
+                        <select
+                          value={editRoomTimeLimit}
+                          onChange={(e) => setEditRoomTimeLimit(Number(e.target.value))}
+                          className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border-2 border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-amber-500 cursor-pointer"
+                        >
+                          <option value={10}>10 Detik</option>
+                          <option value={15}>15 Detik</option>
+                          <option value={20}>20 Detik</option>
+                          <option value={30}>30 Detik</option>
+                          <option value={45}>45 Detik</option>
+                          <option value={60}>60 Detik</option>
+                        </select>
                       </div>
-                    );
-                  })}
+
+                      <div>
+                        <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-1">
+                          Status Ruang
+                        </label>
+                        <select
+                          value={editRoomStatus}
+                          onChange={(e) => setEditRoomStatus(e.target.value as GameRoomStatus)}
+                          className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border-2 border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-amber-500 cursor-pointer"
+                        >
+                          <option value="waiting">Menunggu Peserta</option>
+                          <option value="in_progress">Sedang Melaju</option>
+                          <option value="finished">Selesai</option>
+                          <option value="abandoned">Dibatalkan</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-1">
+                        Tema Sirkuit
+                      </label>
+                      <select
+                        value={editRoomTheme}
+                        onChange={(e) => setEditRoomTheme(e.target.value as any)}
+                        className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border-2 border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-amber-500 cursor-pointer"
+                      >
+                        <option value="racing">🏎️ Balap Mobil GP</option>
+                        <option value="space">🚀 Roket Turbo Angkasa</option>
+                        <option value="safari">🦁 Safari Rimba Hewan</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-2 pt-2 border-t border-slate-100 text-xs font-bold text-slate-700">
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editRoomSpeedBonus}
+                          onChange={(e) => setEditRoomSpeedBonus(e.target.checked)}
+                          className="w-4 h-4 text-indigo-600 rounded-md border-slate-300 focus:ring-indigo-500"
+                        />
+                        <span>Aktifkan Bonus Kecepatan (Speed Bonus)</span>
+                      </label>
+
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editRoomStreakBonus}
+                          onChange={(e) => setEditRoomStreakBonus(e.target.checked)}
+                          className="w-4 h-4 text-orange-600 rounded-md border-slate-300 focus:ring-orange-500"
+                        />
+                        <span>Aktifkan Pengganda Streak (Streak Multiplier)</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* SUB-TAB 2: QUESTIONS CRUD IN ROOM */}
+                {editRoomActiveSubTab === 'questions' && (
+                  <div className="overflow-y-auto space-y-3 pr-1 flex-1 text-xs">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="font-bold text-slate-600">
+                        Total: <strong>{editRoomQuestions.length} Butir Soal</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleAddQuestionToEditRoom}
+                        className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center space-x-1 cursor-pointer transition-all shadow-xs"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Tambah Butir Soal</span>
+                      </button>
+                    </div>
+
+                    {editRoomQuestions.map((q, idx) => {
+                      const isExpanded = editingQuestionIndex === idx;
+                      return (
+                        <div
+                          key={q.id || idx}
+                          className="p-3.5 rounded-2xl border-2 border-slate-200 bg-slate-50 space-y-3"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-black text-xs text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-lg border border-indigo-200">
+                              Soal #{idx + 1}
+                            </span>
+
+                            <div className="flex items-center space-x-1.5">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEditingQuestionIndex(isExpanded ? null : idx)
+                                }
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                              >
+                                {isExpanded ? 'Tutup Edit' : 'Edit Soal'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteQuestionFromEditRoom(idx)}
+                                title="Hapus Soal Ini"
+                                className="p-1 rounded-lg text-rose-500 hover:bg-rose-100 cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {!isExpanded ? (
+                            <p className="font-bold text-slate-800 line-clamp-2">
+                              {q.question}
+                            </p>
+                          ) : (
+                            <div className="space-y-3 pt-1 border-t border-slate-200">
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                  Teks Pertanyaan:
+                                </label>
+                                <textarea
+                                  rows={2}
+                                  value={q.question}
+                                  onChange={(e) => {
+                                    const next = [...editRoomQuestions];
+                                    next[idx].question = e.target.value;
+                                    setEditRoomQuestions(next);
+                                  }}
+                                  className="w-full p-2.5 rounded-xl bg-white border border-slate-200 font-bold text-xs focus:outline-none focus:border-amber-500"
+                                />
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                    Poin:
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={10}
+                                    max={1000}
+                                    value={q.points || 100}
+                                    onChange={(e) => {
+                                      const next = [...editRoomQuestions];
+                                      next[idx].points = Number(e.target.value);
+                                      setEditRoomQuestions(next);
+                                    }}
+                                    className="w-full px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 font-bold text-xs"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                    Waktu (detik):
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={5}
+                                    max={120}
+                                    value={q.timeLimitSeconds || 20}
+                                    onChange={(e) => {
+                                      const next = [...editRoomQuestions];
+                                      next[idx].timeLimitSeconds = Number(e.target.value);
+                                      setEditRoomQuestions(next);
+                                    }}
+                                    className="w-full px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 font-bold text-xs"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Options Editor */}
+                              <div className="space-y-1.5">
+                                <label className="block text-[11px] font-bold text-slate-600">
+                                  Pilihan Jawaban (Pilih radio untuk kunci benar):
+                                </label>
+                                {q.options?.map((opt, oIdx) => (
+                                  <div
+                                    key={oIdx}
+                                    className="flex items-center space-x-2 bg-white p-1.5 rounded-xl border border-slate-200"
+                                  >
+                                    <input
+                                      type="radio"
+                                      name={`correct_${q.id || idx}`}
+                                      checked={q.correctAnswerIndex === oIdx}
+                                      onChange={() => {
+                                        const next = [...editRoomQuestions];
+                                        next[idx].correctAnswerIndex = oIdx;
+                                        setEditRoomQuestions(next);
+                                      }}
+                                      className="w-4 h-4 text-emerald-600 cursor-pointer ml-1"
+                                    />
+                                    <span className="font-black text-slate-500 w-4">
+                                      {String.fromCharCode(65 + oIdx)}.
+                                    </span>
+                                    <input
+                                      type="text"
+                                      value={opt}
+                                      onChange={(e) => {
+                                        const next = [...editRoomQuestions];
+                                        next[idx].options[oIdx] = e.target.value;
+                                        setEditRoomQuestions(next);
+                                      }}
+                                      className="flex-1 px-2 py-1 bg-transparent font-bold text-xs focus:outline-none"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end space-x-2.5 pt-3 border-t border-slate-100 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setEditingRoom(null)}
+                    className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer transition-colors"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isUpdatingRoom}
+                    className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-md cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    {isUpdatingRoom ? 'Menyimpan...' : 'Simpan Perubahan Ruang & Soal'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 2: DETAIL RUANG, DAFTAR SOAL & PESERTA (READ) */}
+        {previewingRoom && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="card-3d max-w-3xl w-full p-6 space-y-4 max-h-[85vh] flex flex-col bg-white">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-mono text-base font-black text-amber-600">
+                      PIN: {previewingRoom.id}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        gameSound.playClick();
+                        navigator.clipboard.writeText(previewingRoom.id);
+                        alert(`PIN ${previewingRoom.id} berhasil disalin!`);
+                      }}
+                      className="p-1 rounded-lg hover:bg-amber-100 text-amber-700 cursor-pointer"
+                      title="Salin PIN"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-xs bg-slate-100 px-2.5 py-0.5 rounded-full font-bold text-slate-600">
+                      {previewingRoom.totalQuestions} Soal
+                    </span>
+                  </div>
+                  <h3 className="text-base font-black text-slate-900 mt-0.5">
+                    {previewingRoom.title}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setPreviewingRoom(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Preview modal tabs */}
+              <div className="flex items-center space-x-2 border-b border-slate-100 pb-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setPreviewTab('questions')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    previewTab === 'questions'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Daftar Soal ({previewingRoom.totalQuestions})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewTab('players')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    previewTab === 'players'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Pembalap Terhubung ({previewPlayers.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewTab('settings')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    previewTab === 'settings'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>Aturan Sirkuit</span>
+                </button>
+              </div>
+
+              {/* TAB 1: Questions List scrollable */}
+              {previewTab === 'questions' && (
+                <div className="overflow-y-auto space-y-3 pr-1 flex-1 text-xs">
+                  {previewingRoom.questions.map((q, idx) => (
+                    <div
+                      key={q.id || idx}
+                      className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2"
+                    >
+                      <div className="flex items-center justify-between font-bold text-[11px] text-slate-500">
+                        <span>Soal {idx + 1} ({q.type})</span>
+                        <span className="text-amber-600">{q.points} Poin</span>
+                      </div>
+
+                      <p className="font-extrabold text-slate-800 text-xs sm:text-sm">
+                        {q.question}
+                      </p>
+
+                      {q.imageUrl && (
+                        <img
+                          src={q.imageUrl}
+                          alt="Soal"
+                          className="max-h-36 rounded-lg object-contain border border-slate-200"
+                        />
+                      )}
+
+                      {/* Options */}
+                      {q.options && q.options.length > 0 && (
+                        <div className="grid grid-cols-2 gap-1.5 pt-1">
+                          {q.options.map((opt, oIdx) => {
+                            const isCorrect = q.correctAnswerIndex === oIdx;
+                            return (
+                              <div
+                                key={oIdx}
+                                className={`p-2 rounded-lg border font-bold text-[11px] flex items-center space-x-1.5 ${
+                                  isCorrect
+                                    ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-black'
+                                    : 'bg-white border-slate-200 text-slate-600'
+                                }`}
+                              >
+                                <span className="w-4 h-4 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[9px] shrink-0">
+                                  {String.fromCharCode(65 + oIdx)}
+                                </span>
+                                <span className="truncate">{opt}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {q.explanation && (
+                        <p className="text-[11px] text-slate-500 italic pt-1 border-t border-slate-200/60">
+                          Penjelasan: {q.explanation}
+                        </p>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
+
+              {/* TAB 2: Connected Players in Real Time */}
+              {previewTab === 'players' && (
+                <div className="overflow-y-auto space-y-2 pr-1 flex-1 text-xs">
+                  {previewPlayers.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400 font-medium">
+                      <p className="text-3xl mb-2">🚦</p>
+                      <p className="font-bold text-slate-600">Belum ada pembalap di ruang ini</p>
+                      <p className="text-xs mt-1">
+                        Siswa dapat memasukkan PIN <strong>{previewingRoom.id}</strong> di Mode Game Race.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {previewPlayers.map((p, pIdx) => (
+                        <div
+                          key={p.id}
+                          className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between"
+                        >
+                          <div className="flex items-center space-x-3">
+                            <span className="w-6 h-6 rounded-full bg-slate-200 text-slate-700 font-black text-xs flex items-center justify-center">
+                              {pIdx + 1}
+                            </span>
+                            <span className="text-2xl">{p.avatar || '🏎️'}</span>
+                            <div>
+                              <div className="font-black text-xs text-slate-800">
+                                {p.name}
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                {p.school || 'Peserta'} {p.grade && `(${p.grade})`} • {p.score || 0} Pts • {p.progress || 0}%
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleKickPlayerInPreview(p.id, p.name)}
+                            className="px-2.5 py-1.5 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-[11px] flex items-center space-x-1 cursor-pointer transition-colors"
+                            title="Keluarkan dari ruang"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Keluarkan</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: Room Settings & Rules Overview */}
+              {previewTab === 'settings' && (
+                <div className="overflow-y-auto space-y-3 pr-1 flex-1 text-xs">
+                  <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 space-y-2">
+                    <div className="font-black text-amber-900 text-sm">
+                      Informasi Sirkuit PIN: {previewingRoom.id}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-slate-700 font-bold">
+                      <div>Paket Asal: <strong>{previewingRoom.examTitle}</strong></div>
+                      <div>Token Soal: <strong>{previewingRoom.examToken}</strong></div>
+                      <div>Waktu per Soal: <strong>{previewingRoom.settings?.questionTimeLimit || 20} Detik</strong></div>
+                      <div>Tema: <strong>{previewingRoom.settings?.theme === 'space' ? '🚀 Angkasa' : previewingRoom.settings?.theme === 'safari' ? '🦁 Safari' : '🏎️ Balap GP'}</strong></div>
+                      <div>Bonus Kecepatan: <strong>{previewingRoom.settings?.speedBonus ? 'Aktif' : 'Nonaktif'}</strong></div>
+                      <div>Streak Multiplier: <strong>{previewingRoom.settings?.streakMultiplier ? 'Aktif' : 'Nonaktif'}</strong></div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100 shrink-0">
+                <span className="text-xs text-slate-500 font-bold">
+                  {previewPlayers.length} Pembalap terhubung
+                </span>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviewingRoom(null);
+                      if (onLaunchGameRoom) onLaunchGameRoom(previewingRoom);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center space-x-1.5 shadow-sm cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Buka Ruang (Host)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewingRoom(null)}
+                    className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 3: KONFIRMASI HAPUS RUANG GAME (DELETE) */}
+        {deletingRoom && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="card-3d max-w-md w-full p-6 space-y-4 bg-white text-center">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto text-xl">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+
+              <div>
+                <h3 className="text-base font-black text-slate-900">
+                  Hapus Ruang Game Race?
+                </h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                  Anda akan menghapus ruang <strong>{deletingRoom.title}</strong> (PIN: <strong className="font-mono text-rose-600">{deletingRoom.id}</strong>). Seluruh data peserta dan jawaban di dalam ruang ini akan dibersihkan.
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeletingRoom(null)}
+                  disabled={isDeletingRoom}
+                  className="flex-1 py-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteRoom}
+                  disabled={isDeletingRoom}
+                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs shadow-md cursor-pointer transition-all disabled:opacity-50"
+                >
+                  {isDeletingRoom ? 'Menghapus...' : 'Ya, Hapus Ruang'}
+                </button>
+              </div>
             </div>
           </div>
         )}

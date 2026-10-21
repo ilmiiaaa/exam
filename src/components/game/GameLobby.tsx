@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GameRoom, GamePlayer, RaceVehicleType } from '../../types/game';
-import { Users, Play, Copy, Check, ArrowLeft, Sparkles, Car, Shield, Flame } from 'lucide-react';
+import { Users, Play, Copy, Check, ArrowLeft, Sparkles, Car, Shield, Flame, Volume2, VolumeX, X } from 'lucide-react';
 import { VEHICLE_OPTIONS, AVATAR_OPTIONS } from '../../lib/gameAdapter';
+import { gameSound } from '../../lib/gameSound';
+import { kickPlayerFromRoom } from '../../lib/gameService';
 
 interface GameLobbyProps {
   room: GameRoom;
@@ -23,6 +25,35 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   onUpdateVehicle,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [isMuted, setIsMuted] = useState<boolean>(() => gameSound.getMuted());
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const prevPlayerCountRef = useRef<number>(players.length);
+
+  // Play blip sound when a new player connects
+  useEffect(() => {
+    if (players.length > prevPlayerCountRef.current) {
+      gameSound.playPlayerJoin();
+    }
+    prevPlayerCountRef.current = players.length;
+  }, [players.length]);
+
+  const handleToggleSound = () => {
+    const next = gameSound.toggleMute();
+    setIsMuted(next);
+  };
+
+  const handleKick = async (playerId: string, playerName: string) => {
+    if (!isHost) return;
+    const confirmKick = window.confirm(`Keluarkan "${playerName}" dari ruang balapan?`);
+    if (!confirmKick) return;
+    try {
+      gameSound.playClick();
+      await kickPlayerFromRoom(room.id, playerId);
+    } catch (err) {
+      console.error('Failed to kick player:', err);
+    }
+  };
+
   const [selectedVehicle, setSelectedVehicle] = useState<RaceVehicleType>(
     currentPlayer?.vehicle || 'car_red'
   );
@@ -31,19 +62,44 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   );
 
   const handleCopyPin = () => {
+    gameSound.playClick();
     navigator.clipboard.writeText(room.id);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };
 
   const handleSelectVehicle = (v: RaceVehicleType) => {
+    gameSound.playClick();
     setSelectedVehicle(v);
     if (onUpdateVehicle) onUpdateVehicle(v, selectedAvatar);
   };
 
   const handleSelectAvatar = (a: string) => {
+    gameSound.playClick();
     setSelectedAvatar(a);
     if (onUpdateVehicle) onUpdateVehicle(selectedVehicle, a);
+  };
+
+  const handleStartWithCountdown = () => {
+    if (countdown !== null) return;
+    gameSound.playCountdown(false);
+    setCountdown(3);
+
+    let currentCount = 3;
+    const timer = setInterval(() => {
+      currentCount--;
+      if (currentCount > 0) {
+        setCountdown(currentCount);
+        gameSound.playCountdown(false);
+      } else {
+        clearInterval(timer);
+        setCountdown(0); // GO!
+        gameSound.playCountdown(true);
+        setTimeout(() => {
+          onStartGame();
+        }, 500);
+      }
+    }, 900);
   };
 
   return (
@@ -58,9 +114,24 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
           <span>Keluar Ruang</span>
         </button>
 
-        <div className="flex items-center space-x-2 bg-indigo-50 border border-indigo-200 text-indigo-700 px-4 py-2 rounded-2xl font-black text-xs">
-          <Car className="w-4 h-4 text-indigo-600" />
-          <span>Mode Balapan Cepat</span>
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={handleToggleSound}
+            className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+              isMuted
+                ? 'bg-slate-100 border-slate-300 text-slate-400'
+                : 'bg-indigo-50 border-indigo-200 text-indigo-700'
+            }`}
+            title={isMuted ? 'Nyalakan Efek Suara' : 'Bisukan Suara'}
+          >
+            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+
+          <div className="flex items-center space-x-2 bg-indigo-50 border border-indigo-200 text-indigo-700 px-4 py-2 rounded-2xl font-black text-xs">
+            <Car className="w-4 h-4 text-indigo-600" />
+            <span>Mode Balapan Cepat</span>
+          </div>
         </div>
       </div>
 
@@ -180,19 +251,33 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
           {/* Host Start Button */}
           {isHost && (
             <button
-              onClick={onStartGame}
-              disabled={players.length === 0}
+              onClick={handleStartWithCountdown}
+              disabled={players.length === 0 || countdown !== null}
               className={`px-6 py-3 rounded-2xl font-black text-sm flex items-center space-x-2 shadow-lg transition-all ${
-                players.length > 0
+                players.length > 0 && countdown === null
                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-95 shadow-emerald-500/30'
                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
               }`}
             >
               <Play className="w-5 h-5 fill-current" />
-              <span>Mulai Balapan Sekarang!</span>
+              <span>{countdown !== null ? `Memulai dalam ${countdown}...` : 'Mulai Balapan Sekarang!'}</span>
             </button>
           )}
         </div>
+
+        {/* Big Start Countdown Overlay */}
+        {countdown !== null && (
+          <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center text-white">
+            <div className="text-center space-y-4 animate-bounce">
+              <div className="text-8xl sm:text-9xl font-black text-amber-400 drop-shadow-2xl">
+                {countdown === 0 ? '🏁 GO!' : countdown}
+              </div>
+              <p className="text-lg sm:text-2xl font-black text-indigo-200 uppercase tracking-widest">
+                {countdown === 0 ? 'Sirkuit Dibuka! Selamat Berlomba!' : 'Pembalap Bersiap di Garis Start...'}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Players Grid */}
         {players.length === 0 ? (
@@ -203,20 +288,33 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {players.map((p, idx) => (
+            {players.map((p) => (
               <div
                 key={p.id}
-                className="bg-slate-50 hover:bg-slate-100/80 border border-slate-200 p-3 rounded-2xl flex items-center space-x-3 transition-all"
+                className="bg-slate-50 hover:bg-slate-100/80 border border-slate-200 p-3 rounded-2xl flex items-center justify-between transition-all group"
               >
-                <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-xl shadow-xs">
-                  {p.avatar || '🏎️'}
-                </div>
-                <div className="truncate">
-                  <div className="font-black text-xs text-slate-800 truncate">{p.name}</div>
-                  <div className="text-[10px] text-slate-400 truncate">
-                    {p.school ? `${p.school}` : 'Peserta'} {p.grade && `(${p.grade})`}
+                <div className="flex items-center space-x-3 truncate">
+                  <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-xl shadow-xs shrink-0">
+                    {p.avatar || '🏎️'}
+                  </div>
+                  <div className="truncate">
+                    <div className="font-black text-xs text-slate-800 truncate">{p.name}</div>
+                    <div className="text-[10px] text-slate-400 truncate">
+                      {p.school ? `${p.school}` : 'Peserta'} {p.grade && `(${p.grade})`}
+                    </div>
                   </div>
                 </div>
+
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={() => handleKick(p.id, p.name)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer shrink-0 ml-1"
+                    title={`Keluarkan ${p.name}`}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             ))}
           </div>

@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { GameResult } from '../../types/game';
-import { Trophy, ArrowLeft, RotateCcw, Medal, Award, CheckCircle2, Users, Download } from 'lucide-react';
+import { Trophy, ArrowLeft, RotateCcw, Medal, Award, CheckCircle2, Users, Download, Volume2, VolumeX } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { gameSound } from '../../lib/gameSound';
 
 interface GameResultScreenProps {
   result: GameResult;
@@ -15,8 +16,19 @@ export const GameResultScreen: React.FC<GameResultScreenProps> = ({
   isHost,
 }) => {
   const topThree = result.leaderboard.slice(0, 3);
+  const [isMuted, setIsMuted] = useState<boolean>(() => gameSound.getMuted());
+
+  const handleToggleSound = () => {
+    const next = gameSound.toggleMute();
+    setIsMuted(next);
+  };
+
+  useEffect(() => {
+    gameSound.playFinishFanfare();
+  }, []);
 
   const handleExportExcel = () => {
+    gameSound.playClick();
     try {
       const data = result.leaderboard.map((item) => ({
         Peringkat: item.rank,
@@ -50,13 +62,28 @@ export const GameResultScreen: React.FC<GameResultScreenProps> = ({
           <span>Kembali ke Beranda</span>
         </button>
 
-        <button
-          onClick={handleExportExcel}
-          className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 rounded-2xl shadow-md cursor-pointer transition-all"
-        >
-          <Download className="w-4 h-4" />
-          <span>Unduh Rekap Excel</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={handleToggleSound}
+            className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+              isMuted
+                ? 'bg-slate-100 border-slate-300 text-slate-400'
+                : 'bg-indigo-50 border-indigo-200 text-indigo-700'
+            }`}
+            title={isMuted ? 'Nyalakan Efek Suara' : 'Bisukan Suara'}
+          >
+            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+
+          <button
+            onClick={handleExportExcel}
+            className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 rounded-2xl shadow-md cursor-pointer transition-all"
+          >
+            <Download className="w-4 h-4" />
+            <span>Unduh Rekap Excel</span>
+          </button>
+        </div>
       </div>
 
       {/* Podium Winner Banner */}

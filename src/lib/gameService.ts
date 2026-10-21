@@ -38,11 +38,21 @@ import {
 export async function createGameRoom(params: {
   exam: Exam;
   hostName: string;
+  title?: string;
   questionTimeLimit?: number;
   speedBonus?: boolean;
   streakMultiplier?: boolean;
+  theme?: 'racing' | 'space' | 'safari';
 }): Promise<GameRoom> {
-  const { exam, hostName, questionTimeLimit = 20, speedBonus = true, streakMultiplier = true } = params;
+  const {
+    exam,
+    hostName,
+    title,
+    questionTimeLimit = 20,
+    speedBonus = true,
+    streakMultiplier = true,
+    theme = 'racing',
+  } = params;
 
   let roomId = generateRoomPin();
   let roomRef = doc(db, 'gameRooms', roomId);
@@ -65,7 +75,7 @@ export async function createGameRoom(params: {
 
   const roomData: GameRoom = {
     id: roomId,
-    title: `Game Race - ${exam.title}`,
+    title: title ? title.trim() : `Game Race - ${exam.title}`,
     examToken: exam.token,
     examTitle: exam.title,
     hostName: hostName || 'Guru Pengawas',
@@ -387,7 +397,7 @@ export async function finalizeGameResults(roomId: string): Promise<GameResult> {
  * Listen to active & recent game rooms for host/teacher
  */
 export function listenToActiveGameRooms(callback: (rooms: GameRoom[]) => void) {
-  const qRooms = query(collection(db, 'gameRooms'), orderBy('createdAt', 'desc'), limit(20));
+  const qRooms = query(collection(db, 'gameRooms'), orderBy('createdAt', 'desc'), limit(30));
   return onSnapshot(
     qRooms,
     (snapshot) => {
@@ -403,3 +413,234 @@ export function listenToActiveGameRooms(callback: (rooms: GameRoom[]) => void) {
     }
   );
 }
+
+/**
+ * Get a single game room by ID
+ */
+export async function getGameRoom(roomId: string): Promise<GameRoom | null> {
+  const roomSnap = await getDoc(doc(db, 'gameRooms', roomId));
+  if (roomSnap.exists()) {
+    return { id: roomSnap.id, ...roomSnap.data() } as GameRoom;
+  }
+  return null;
+}
+
+/**
+ * Update an existing game room (Title, Settings, Status)
+ */
+export async function updateGameRoom(
+  roomId: string,
+  updates: Partial<GameRoom>
+): Promise<void> {
+  const roomRef = doc(db, 'gameRooms', roomId);
+  await updateDoc(roomRef, sanitizeForFirestore(updates));
+}
+
+/**
+ * Reset a game room so students can replay the race
+ * Resets status to 'waiting', question index to 0, resets all player scores/progress,
+ * and clears old answers.
+ */
+export async function resetGameRoom(roomId: string): Promise<void> {
+  const roomRef = doc(db, 'gameRooms', roomId);
+  const roomSnap = await getDoc(roomRef);
+  if (!roomSnap.exists()) throw new Error('Ruang game tidak ditemukan');
+
+  // Reset room document
+  await updateDoc(roomRef, {
+    status: 'waiting',
+    currentQuestionIndex: 0,
+    startedAt: null,
+    finishedAt: null,
+  });
+
+  // Reset all players in room
+  const playersSnap = await getDocs(collection(db, 'gameRooms', roomId, 'players'));
+  const resetPlayerPromises = playersSnap.docs.map((pDoc) =>
+    updateDoc(doc(db, 'gameRooms', roomId, 'players', pDoc.id), {
+      score: 0,
+      correctCount: 0,
+      wrongCount: 0,
+      streak: 0,
+      highestStreak: 0,
+      progress: 0,
+      currentQuestionIndex: 0,
+      isFinished: false,
+      lastAnswerCorrect: null,
+      lastAnswerTimeMs: null,
+      lastActiveAt: new Date().toISOString(),
+    })
+  );
+  await Promise.all(resetPlayerPromises);
+
+  // Clear answers in room
+  const answersSnap = await getDocs(collection(db, 'gameRooms', roomId, 'answers'));
+  const deleteAnswerPromises = answersSnap.docs.map((aDoc) =>
+    deleteDoc(doc(db, 'gameRooms', roomId, 'answers', aDoc.id))
+  );
+  await Promise.all(deleteAnswerPromises);
+}
+
+/**
+ * Delete a game room and all its subcollections (players, answers) and results
+ */
+export async function deleteGameRoom(roomId: string): Promise<void> {
+  // 1. Delete players subcollection
+  try {
+    const playersSnap = await getDocs(collection(db, 'gameRooms', roomId, 'players'));
+    const deletePlayers = playersSnap.docs.map((d) =>
+      deleteDoc(doc(db, 'gameRooms', roomId, 'players', d.id))
+    );
+    await Promise.all(deletePlayers);
+  } catch (e) {
+    console.warn('Delete players note:', e);
+  }
+
+  // 2. Delete answers subcollection
+  try {
+    const answersSnap = await getDocs(collection(db, 'gameRooms', roomId, 'answers'));
+    const deleteAnswers = answersSnap.docs.map((d) =>
+      deleteDoc(doc(db, 'gameRooms', roomId, 'answers', d.id))
+    );
+    await Promise.all(deleteAnswers);
+  } catch (e) {
+    console.warn('Delete answers note:', e);
+  }
+
+  // 3. Delete room document
+  await deleteDoc(doc(db, 'gameRooms', roomId));
+
+  // 4. Optionally delete gameResults
+  try {
+    await deleteDoc(doc(db, 'gameResults', roomId));
+  } catch (e) {}
+}
+
+/**
+ * Bulk delete finished or abandoned game rooms
+ */
+export async function bulkDeleteFinishedRooms(): Promise<number> {
+  const roomsSnap = await getDocs(collection(db, 'gameRooms'));
+  let deletedCount = 0;
+
+  for (const roomDoc of roomsSnap.docs) {
+    const data = roomDoc.data();
+    if (data.status === 'finished' || data.status === 'abandoned') {
+      await deleteGameRoom(roomDoc.id);
+      deletedCount++;
+    }
+  }
+
+  return deletedCount;
+}
+
+/**
+ * Duplicate / Clone an existing game room with a new unique PIN
+ */
+export async function duplicateGameRoom(sourceRoomId: string, hostName?: string): Promise<GameRoom> {
+  const source = await getGameRoom(sourceRoomId);
+  if (!source) throw new Error('Ruang sumber tidak ditemukan');
+
+  let newRoomId = generateRoomPin();
+  let roomRef = doc(db, 'gameRooms', newRoomId);
+  let existing = await getDoc(roomRef);
+  let attempts = 0;
+  while (existing.exists() && attempts < 5) {
+    newRoomId = generateRoomPin();
+    roomRef = doc(db, 'gameRooms', newRoomId);
+    existing = await getDoc(roomRef);
+    attempts++;
+  }
+
+  const duplicatedRoom: GameRoom = {
+    ...source,
+    id: newRoomId,
+    title: `${source.title} (Salinan)`,
+    status: 'waiting',
+    playerCount: 0,
+    currentQuestionIndex: 0,
+    createdAt: new Date().toISOString(),
+    startedAt: undefined,
+    finishedAt: undefined,
+    hostName: hostName || source.hostName,
+  };
+
+  await setDoc(roomRef, sanitizeForFirestore(duplicatedRoom));
+  return duplicatedRoom;
+}
+
+/**
+ * Update a specific question in a game room
+ */
+export async function updateGameRoomQuestion(
+  roomId: string,
+  questionIndex: number,
+  updatedQuestion: GameQuestion
+): Promise<void> {
+  const room = await getGameRoom(roomId);
+  if (!room) throw new Error('Ruang game tidak ditemukan');
+
+  const questions = [...room.questions];
+  if (questionIndex < 0 || questionIndex >= questions.length) {
+    throw new Error('Index soal tidak valid');
+  }
+
+  questions[questionIndex] = updatedQuestion;
+  await updateGameRoom(roomId, { questions, totalQuestions: questions.length });
+}
+
+/**
+ * Add a new question to a game room
+ */
+export async function addGameRoomQuestion(
+  roomId: string,
+  newQuestion: GameQuestion
+): Promise<void> {
+  const room = await getGameRoom(roomId);
+  if (!room) throw new Error('Ruang game tidak ditemukan');
+
+  const questions = [...(room.questions || []), newQuestion];
+  await updateGameRoom(roomId, { questions, totalQuestions: questions.length });
+}
+
+/**
+ * Delete a question from a game room
+ */
+export async function deleteGameRoomQuestion(
+  roomId: string,
+  questionIndex: number
+): Promise<void> {
+  const room = await getGameRoom(roomId);
+  if (!room) throw new Error('Ruang game tidak ditemukan');
+
+  const questions = room.questions.filter((_, idx) => idx !== questionIndex);
+  if (questions.length === 0) {
+    throw new Error('Ruang game minimal harus memiliki 1 butir soal!');
+  }
+
+  await updateGameRoom(roomId, { questions, totalQuestions: questions.length });
+}
+
+/**
+ * Reorder questions in a game room
+ */
+export async function reorderGameRoomQuestions(
+  roomId: string,
+  newQuestions: GameQuestion[]
+): Promise<void> {
+  await updateGameRoom(roomId, { questions: newQuestions, totalQuestions: newQuestions.length });
+}
+
+/**
+ * Kick / remove a player from a waiting game room
+ */
+export async function kickPlayerFromRoom(roomId: string, playerId: string): Promise<void> {
+  const playerRef = doc(db, 'gameRooms', roomId, 'players', playerId);
+  await deleteDoc(playerRef);
+
+  const room = await getGameRoom(roomId);
+  if (room && (room.playerCount || 0) > 0) {
+    await updateGameRoom(roomId, { playerCount: Math.max(0, (room.playerCount || 1) - 1) });
+  }
+}
+
